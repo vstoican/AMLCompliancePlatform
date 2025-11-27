@@ -82,24 +82,112 @@ body {
   flex-direction: column;
   gap: 8px;
 }
+.accordion {
+  gap: 24px;
+}
+.accordion-item {
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+  background: transparent;
+  transition: all 0.2s ease;
+}
+.accordion-trigger {
+  width: 100%;
+  padding: 0 0 10px 0;
+  background: none;
+  color: var(--muted);
+  border: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-bottom: 8px;
+}
+.accordion-trigger:hover {
+  color: var(--text);
+  border-bottom-color: var(--border);
+}
+.accordion-trigger::after {
+  content: "▾";
+  font-size: 10px;
+  opacity: 0.4;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+.accordion-item.open .accordion-trigger {
+  color: var(--text);
+  border-bottom-color: var(--border);
+}
+.accordion-item.open .accordion-trigger::after {
+  transform: rotate(180deg);
+  opacity: 0.6;
+}
+.accordion-panel {
+  display: none;
+  padding: 0;
+  background: transparent;
+}
+.accordion-item.open .accordion-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 .nav-item {
   width: 100%;
-  padding: 12px 14px;
-  border-radius: 12px;
-  border: 1px solid transparent;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: none;
   background: transparent;
-  color: var(--text);
+  color: var(--muted);
   text-align: left;
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 500;
+  font-size: 14px;
+  transition: all 0.15s ease;
+  position: relative;
+  overflow: hidden;
+}
+.nav-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--primary);
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
 .nav-item:hover {
-  border-color: var(--border);
-  background: rgba(255,255,255,0.02);
+  background: color-mix(in srgb, var(--primary) 5%, transparent);
+  color: var(--text);
+}
+.nav-item:hover::before {
+  opacity: 0.4;
 }
 .nav-item.active {
-  background: color-mix(in srgb, var(--primary) 16%, transparent);
-  border-color: color-mix(in srgb, var(--primary) 60%, var(--border));
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  color: var(--primary);
+  font-weight: 600;
+}
+.nav-item.active::before {
+  opacity: 1;
+}
+.nav-item.nav-sub {
+  padding-left: 28px;
+  font-size: 13px;
+  color: color-mix(in srgb, var(--muted) 85%, transparent);
+}
+.nav-item.nav-sub:hover {
+  color: var(--muted);
+}
+.nav-item.nav-sub.active {
   color: var(--primary);
 }
 
@@ -232,6 +320,10 @@ select {
   padding: 8px;
   overflow-x: auto;
 }
+.table.compact table td,
+.table.compact table th {
+  padding: 8px 10px;
+}
 table {
   width: 100%;
   border-collapse: collapse;
@@ -253,6 +345,9 @@ tr:hover td {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.list.dense .row {
+  padding: 8px 12px;
 }
 .list .row {
   display: flex;
@@ -296,6 +391,70 @@ tr:hover td {
   background: transparent;
   color: var(--muted);
   border: none;
+}
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.chip {
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--muted);
+}
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.definition-row {
+  align-items: center;
+}
+.alerts-layout {
+  align-items: flex-start;
+}
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch span {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: color-mix(in srgb, var(--border) 70%, transparent);
+  transition: 0.2s;
+  border-radius: 24px;
+}
+.switch span:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--card);
+  transition: 0.2s;
+  border-radius: 50%;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+.switch input:checked + span {
+  background-color: color-mix(in srgb, var(--primary) 60%, transparent);
+}
+.switch input:checked + span:before {
+  transform: translateX(20px);
 }
 .btn.icon {
   background: transparent;

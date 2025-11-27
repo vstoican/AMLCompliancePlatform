@@ -4,6 +4,7 @@ const state = {
   customers: [],
   transactions: [],
   alerts: [],
+  alertDefinitions: [],
   kyc: [],
   reports: {
     highRisk: [],
@@ -12,10 +13,12 @@ const state = {
 };
 
 const navButtons = document.querySelectorAll(".nav-item");
+const accordionTriggers = document.querySelectorAll(".accordion-trigger");
 const panels = document.querySelectorAll(".panel");
 const searchInput = document.getElementById("searchInput");
 const riskFilter = document.getElementById("riskFilter");
 const alertStatusFilter = document.getElementById("alertStatusFilter");
+const alertStatusFilter2 = document.getElementById("alertStatusFilter2");
 const refreshBtn = document.getElementById("refreshBtn");
 const themeToggle = document.getElementById("themeToggle");
 const themeIcon = document.getElementById("themeIcon");
@@ -29,8 +32,21 @@ const openModalBtn = document.getElementById("createCustomerBtn");
 const closeModalBtn = document.getElementById("closeModal");
 const customerForm = document.getElementById("customerForm");
 
+const alertDefModal = document.getElementById("alertDefModal");
+const openAlertDefModalBtn = document.getElementById("createAlertDefBtn");
+const closeAlertDefModalBtn = document.getElementById("closeAlertDefModal");
+const alertDefForm = document.getElementById("alertDefForm");
+const alertDefModalTitle = document.getElementById("alertDefModalTitle");
+
 navButtons.forEach((btn) =>
   btn.addEventListener("click", () => activatePanel(btn.dataset.target))
+);
+
+accordionTriggers.forEach((trigger) =>
+  trigger.addEventListener("click", () => {
+    const item = trigger.parentElement;
+    item.classList.toggle("open");
+  })
 );
 
 document.querySelectorAll(".btn.text").forEach((btn) => {
@@ -40,6 +56,7 @@ document.querySelectorAll(".btn.text").forEach((btn) => {
 searchInput.addEventListener("input", () => renderAll());
 riskFilter.addEventListener("change", () => loadCustomers());
 alertStatusFilter.addEventListener("change", () => loadAlerts());
+alertStatusFilter2.addEventListener("change", () => loadAlerts());
 refreshBtn.addEventListener("click", () => loadAll());
 runKycBtn.addEventListener("click", handleRunKyc);
 runReportBtn.addEventListener("click", handleRunReport);
@@ -49,6 +66,12 @@ openModalBtn.addEventListener("click", () => toggleModal(true));
 closeModalBtn.addEventListener("click", () => toggleModal(false));
 modal.addEventListener("click", (e) => {
   if (e.target === modal) toggleModal(false);
+});
+
+openAlertDefModalBtn.addEventListener("click", () => openAlertDefModalForCreate());
+closeAlertDefModalBtn.addEventListener("click", () => toggleAlertDefModal(false));
+alertDefModal.addEventListener("click", (e) => {
+  if (e.target === alertDefModal) toggleAlertDefModal(false);
 });
 
 const sunIcon = `
@@ -96,6 +119,85 @@ customerForm.addEventListener("submit", async (e) => {
 function toggleModal(show) {
   modal.classList.toggle("hidden", !show);
 }
+
+function toggleAlertDefModal(show) {
+  alertDefModal.classList.toggle("hidden", !show);
+}
+
+function openAlertDefModalForCreate() {
+  alertDefModalTitle.textContent = "Create Alert Rule";
+  alertDefForm.reset();
+  alertDefForm.querySelector('[name="definition_id"]').value = "";
+  alertDefForm.querySelector('[name="code"]').removeAttribute("readonly");
+  toggleAlertDefModal(true);
+}
+
+function openAlertDefModalForEdit(definition) {
+  alertDefModalTitle.textContent = "Edit Alert Rule";
+  alertDefForm.querySelector('[name="definition_id"]').value = definition.id;
+  alertDefForm.querySelector('[name="code"]').value = definition.code;
+  alertDefForm.querySelector('[name="code"]').setAttribute("readonly", "readonly");
+  alertDefForm.querySelector('[name="name"]').value = definition.name;
+  alertDefForm.querySelector('[name="description"]').value = definition.description || "";
+  alertDefForm.querySelector('[name="category"]').value = definition.category;
+  alertDefForm.querySelector('[name="severity"]').value = definition.severity;
+  alertDefForm.querySelector('[name="threshold_amount"]').value = definition.threshold_amount || "";
+  alertDefForm.querySelector('[name="window_minutes"]').value = definition.window_minutes || "";
+  alertDefForm.querySelector('[name="channels"]').value = definition.channels ? definition.channels.join(", ") : "";
+  alertDefForm.querySelector('[name="country_scope"]').value = definition.country_scope ? definition.country_scope.join(", ") : "";
+  alertDefForm.querySelector('[name="direction"]').value = definition.direction || "";
+  alertDefForm.querySelector('[name="enabled"]').checked = definition.enabled;
+  toggleAlertDefModal(true);
+}
+
+alertDefForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const data = new FormData(alertDefForm);
+  const definitionId = data.get("definition_id");
+
+  const channelsStr = data.get("channels");
+  const channels = channelsStr ? channelsStr.split(",").map(s => s.trim()).filter(Boolean) : null;
+
+  const countryScopeStr = data.get("country_scope");
+  const country_scope = countryScopeStr ? countryScopeStr.split(",").map(s => s.trim()).filter(Boolean) : null;
+
+  const payload = {
+    code: data.get("code"),
+    name: data.get("name"),
+    description: data.get("description") || null,
+    category: data.get("category"),
+    severity: data.get("severity"),
+    threshold_amount: data.get("threshold_amount") ? Number(data.get("threshold_amount")) : null,
+    window_minutes: data.get("window_minutes") ? Number(data.get("window_minutes")) : null,
+    channels: channels,
+    country_scope: country_scope,
+    direction: data.get("direction") || null,
+    enabled: data.get("enabled") === "on",
+  };
+
+  let result;
+  if (definitionId) {
+    // Update existing
+    result = await fetchJSON(`/alert-definitions/${definitionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+  } else {
+    // Create new
+    result = await fetchJSON("/alert-definitions", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
+  if (result) {
+    toggleAlertDefModal(false);
+    alertDefForm.reset();
+    await loadAlertDefinitions();
+  } else {
+    alert("Could not save alert definition. Check API or ensure code is unique.");
+  }
+});
 
 function setTheme(theme) {
   document.documentElement.setAttribute("data-theme", theme);
@@ -151,12 +253,21 @@ async function loadTransactions() {
 }
 
 async function loadAlerts() {
-  const filter = alertStatusFilter.value;
+  const filter = alertStatusFilter.value || alertStatusFilter2.value;
   const qs = filter ? `?status=${filter}` : "";
   const data = await fetchJSON(`/alerts${qs}`);
   state.alerts = data ?? sampleAlerts();
   renderAlerts();
   renderOverview();
+  // Sync filter values
+  if (alertStatusFilter.value !== filter) alertStatusFilter.value = filter;
+  if (alertStatusFilter2.value !== filter) alertStatusFilter2.value = filter;
+}
+
+async function loadAlertDefinitions() {
+  const data = await fetchJSON("/alert-definitions");
+  state.alertDefinitions = data ?? [];
+  renderAlertDefinitions();
 }
 
 async function loadKyc() {
@@ -270,15 +381,15 @@ function renderAlerts() {
   const table = `
     <table>
       <thead>
-        <tr><th>Type</th><th>Scenario</th><th>Severity</th><th>Status</th><th>Created</th></tr>
+        <tr><th>Scenario</th><th>Definition</th><th>Severity</th><th>Status</th><th>Created</th></tr>
       </thead>
       <tbody>
         ${rows
           .map(
             (a) => `
           <tr>
-            <td>${a.type}</td>
             <td>${a.scenario ?? "-"}</td>
+            <td>${a.details?.definition_name ?? a.details?.definition_code ?? "-"}</td>
             <td><span class="badge ${severityBadge(a.severity)}">${a.severity}</span></td>
             <td>${a.status}</td>
             <td>${new Date(a.created_at).toLocaleString()}</td>
@@ -289,6 +400,78 @@ function renderAlerts() {
     </table>
   `;
   document.getElementById("alertTable").innerHTML = table;
+  const el2 = document.getElementById("alertTable2");
+  if (el2) el2.innerHTML = table;
+}
+
+function renderAlertDefinitions() {
+  const list = state.alertDefinitions
+    .map(
+      (d) => `
+        <div class="row definition-row">
+          <div>
+            <div class="title">${d.name}${d.is_system_default ? ' <span class="chip" style="background: rgba(91,224,179,0.12); color: var(--primary);">System</span>' : ""}</div>
+            <div class="subtitle">${d.description ?? ""}</div>
+            <div class="chips">
+              <span class="chip">${d.code}</span>
+              <span class="chip">${d.category}</span>
+              <span class="chip">${d.direction ?? "transaction"}</span>
+              ${d.threshold_amount ? `<span class="chip">≥ ${d.threshold_amount}</span>` : ""}
+              ${d.window_minutes ? `<span class="chip">${d.window_minutes}m window</span>` : ""}
+            </div>
+          </div>
+          <div class="row-actions">
+            <span class="badge ${severityBadge(d.severity)}">${d.severity}</span>
+            <button class="btn ghost" data-edit-def="${d.id}" style="padding: 6px 10px; font-size: 13px;">Edit</button>
+            ${!d.is_system_default ? `<button class="btn ghost" data-delete-def="${d.id}" style="padding: 6px 10px; font-size: 13px; color: var(--red);">Delete</button>` : ""}
+            <label class="switch">
+              <input type="checkbox" data-definition-id="${d.id}" ${d.enabled ? "checked" : ""} />
+              <span></span>
+            </label>
+          </div>
+        </div>
+      `
+    )
+    .join("");
+  document.getElementById("alertDefinitions").innerHTML = list || emptyState("No definitions");
+  const el2 = document.getElementById("alertDefinitions2");
+  if (el2) el2.innerHTML = list || emptyState("No definitions");
+
+  // Toggle enable/disable
+  document.querySelectorAll("[data-definition-id]").forEach((input) => {
+    input.addEventListener("change", async (e) => {
+      const id = e.target.dataset.definitionId;
+      const enabled = e.target.checked;
+      await fetchJSON(`/alert-definitions/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled }),
+      });
+      await loadAlertDefinitions();
+    });
+  });
+
+  // Edit buttons
+  document.querySelectorAll("[data-edit-def]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = parseInt(btn.dataset.editDef);
+      const definition = state.alertDefinitions.find(d => d.id === id);
+      if (definition) openAlertDefModalForEdit(definition);
+    });
+  });
+
+  // Delete buttons
+  document.querySelectorAll("[data-delete-def]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = parseInt(btn.dataset.deleteDef);
+      const definition = state.alertDefinitions.find(d => d.id === id);
+      if (definition && confirm(`Delete alert rule "${definition.name}"?`)) {
+        await fetchJSON(`/alert-definitions/${id}`, {
+          method: "DELETE",
+        });
+        await loadAlertDefinitions();
+      }
+    });
+  });
 }
 
 function renderKyc() {
@@ -397,6 +580,7 @@ function renderAll() {
   renderCustomers();
   renderTransactions();
   renderAlerts();
+  renderAlertDefinitions();
   renderKyc();
   renderReports();
   renderOverview();
@@ -450,7 +634,14 @@ function sampleKycTasks() {
 }
 
 async function loadAll() {
-  await Promise.all([loadCustomers(), loadTransactions(), loadAlerts(), loadKyc(), loadReports()]);
+  await Promise.all([
+    loadCustomers(),
+    loadTransactions(),
+    loadAlerts(),
+    loadAlertDefinitions(),
+    loadKyc(),
+    loadReports(),
+  ]);
 }
 
 initTheme();

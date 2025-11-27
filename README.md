@@ -17,6 +17,7 @@ docker-compose up --build
 - `src/api/main.py` FastAPI endpoints for customers, risk scoring, transactions, alerts, KYC tasks, and reports.
 - `src/api/risk.py` Basic AML risk scoring (auto + manual override).
 - `db/migrations/V1__initial_schema.sql` Schema bootstrap with Timescale hypertable for `transactions`.
+- `db/migrations/V2__alert_definitions_and_trigger.sql` Alert library, seed rules, and near-real-time trigger-based evaluator on the transactions hypertable.
 - `src/workflows/worker.py` Temporal worker with sample workflows (KYC refresh, sanctions alert stub).
 - `frontend/` Static ops console (dashboard, customers, transactions, alerts, KYC, reports).
 
@@ -45,6 +46,7 @@ KYC expiry check and alert reporting:
 curl -X POST http://localhost:8000/kyc/run?days_before_expiry=45
 curl -X GET http://localhost:8000/reports/alerts
 ```
+- Alert definitions are exposed at `GET /alert-definitions` and can be toggled/updated via `PATCH /alert-definitions/{id}`.
 
 ## Temporal workflows
 - Task queue: `aml-tasks`
@@ -60,4 +62,4 @@ curl -X GET http://localhost:8000/reports/alerts
 
 ## Notes
 - NATS publishing is best-effort; API keeps working if broker is offline.
-- Alerting rules are intentionally simple (large transaction, geography mismatch, high-risk customer). Expand in `evaluate_transaction`.
+- Transaction alerts run inside the database trigger (Timescale hypertable) using the enabled alert definitions; no dependency on NATS for alerting.

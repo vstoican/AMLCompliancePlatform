@@ -55,6 +55,7 @@ class Alert(BaseModel):
     status: str
     severity: str
     scenario: Optional[str]
+    alert_definition_id: Optional[int] = None
     details: dict[str, Any]
     created_at: datetime
     resolved_at: Optional[datetime]
@@ -72,3 +73,48 @@ class ReportFilters(BaseModel):
     to_date: Optional[date] = None
     risk_level: Optional[str] = None
     scenario: Optional[str] = None
+
+
+class AlertDefinition(BaseModel):
+    id: int
+    code: str
+    name: str
+    description: Optional[str] = None
+    category: str
+    enabled: bool
+    severity: str
+    threshold_amount: Optional[float] = None
+    window_minutes: Optional[int] = None
+    channels: Optional[list[str]] = None
+    country_scope: Optional[list[str]] = None
+    direction: Optional[str] = None
+    is_system_default: bool = False
+    created_at: datetime
+    updated_at: datetime
+
+
+class AlertDefinitionCreate(BaseModel):
+    code: str
+    name: str
+    description: Optional[str] = None
+    category: str = "transaction_monitoring"
+    enabled: bool = True
+    severity: str = "medium"
+    threshold_amount: Optional[float] = None
+    window_minutes: Optional[int] = None
+    channels: Optional[list[str]] = None
+    country_scope: Optional[list[str]] = None
+    direction: Optional[str] = None
+
+
+class AlertDefinitionUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    category: Optional[str] = None
+    severity: Optional[str] = None
+    threshold_amount: Optional[float] = None
+    window_minutes: Optional[int] = None
+    channels: Optional[list[str]] = None
+    country_scope: Optional[list[str]] = None
+    direction: Optional[str] = None

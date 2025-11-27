@@ -17,13 +17,25 @@
           <div class="brand-sub">AML Ops Console</div>
         </div>
       </div>
-      <nav class="nav">
-        <button class="nav-item active" data-target="overview">Overview</button>
-        <button class="nav-item" data-target="customers">Customers</button>
-        <button class="nav-item" data-target="transactions">Transactions</button>
-        <button class="nav-item" data-target="alerts">Alerts</button>
-        <button class="nav-item" data-target="kyc">KYC</button>
-        <button class="nav-item" data-target="reports">Reports</button>
+      <nav class="nav accordion">
+        <div class="accordion-item open">
+          <button class="accordion-trigger">Operations</button>
+          <div class="accordion-panel">
+            <button class="nav-item" data-target="customers">Customers</button>
+            <button class="nav-item" data-target="kyc">KYC</button>
+            <button class="nav-item" data-target="reports">Reports</button>
+          </div>
+        </div>
+        <div class="accordion-item open">
+          <button class="accordion-trigger">Monitoring</button>
+          <div class="accordion-panel">
+            <button class="nav-item active" data-target="overview">Overview</button>
+            <button class="nav-item" data-target="transactions">Transactions</button>
+            <button class="nav-item nav-parent" data-target="alerts">Alerts</button>
+            <button class="nav-item nav-sub" data-target="alert-definitions">Alert definitions</button>
+            <button class="nav-item nav-sub" data-target="alert-stream">Alert stream</button>
+          </div>
+        </div>
       </nav>
     </aside>
 
@@ -112,7 +124,7 @@
         <div class="panel-head">
           <div>
             <h2>Alerts</h2>
-            <p class="muted">Case management, severity, resolution notes</p>
+            <p class="muted">Library-backed, near real-time triggers on the hypertable</p>
           </div>
           <select id="alertStatusFilter">
             <option value="">All</option>
@@ -121,7 +133,51 @@
             <option value="closed">Closed</option>
           </select>
         </div>
-        <div id="alertTable" class="table"></div>
+        <div class="grid two alerts-layout">
+          <div class="card">
+            <div class="card-head">
+              <h3>Alert definitions</h3>
+              <span class="muted small">Toggle to enable/disable rules</span>
+            </div>
+            <div id="alertDefinitions" class="list dense"></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>Alert stream</h3>
+              <span class="muted small">Latest 100 alerts (DB trigger)</span>
+            </div>
+            <div id="alertTable" class="table compact"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="alert-definitions" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Alert definitions</h2>
+            <p class="muted">Toggle to enable/disable alert rules</p>
+          </div>
+          <button id="createAlertDefBtn" class="btn primary">New Alert Rule</button>
+        </div>
+        <div class="card">
+          <div id="alertDefinitions2" class="list dense"></div>
+        </div>
+      </section>
+
+      <section id="alert-stream" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Alert stream</h2>
+            <p class="muted">Latest 100 alerts triggered by hypertable</p>
+          </div>
+          <select id="alertStatusFilter2">
+            <option value="">All</option>
+            <option value="open">Open</option>
+            <option value="in_progress">In progress</option>
+            <option value="closed">Closed</option>
+          </select>
+        </div>
+        <div id="alertTable2" class="table"></div>
       </section>
 
       <section id="kyc" class="panel">
@@ -183,6 +239,48 @@
         <label class="checkbox"><input name="sanctions_hit" type="checkbox" /> Sanctions hit</label>
         <label>Manual override <input name="risk_override" placeholder="e.g. elevate to high" /></label>
         <button class="btn primary" type="submit">Create</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="alertDefModal" class="modal hidden">
+    <div class="modal-content" style="width: min(560px, 90vw)">
+      <div class="modal-head">
+        <h3 id="alertDefModalTitle">Create Alert Rule</h3>
+        <button id="closeAlertDefModal" class="btn icon">&times;</button>
+      </div>
+      <form id="alertDefForm" class="form">
+        <input type="hidden" name="definition_id" />
+        <label>Code <input name="code" required placeholder="e.g. VELOCITY_CHECK_1H" /></label>
+        <label>Name <input name="name" required placeholder="e.g. Velocity ≥ EUR 5k in 1h" /></label>
+        <label>Description <textarea name="description" rows="2" style="resize: vertical; font-family: inherit;"></textarea></label>
+        <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+          <label>Category <select name="category" required>
+            <option value="transaction_monitoring">Transaction Monitoring</option>
+            <option value="kyc">KYC</option>
+            <option value="sanctions">Sanctions</option>
+          </select></label>
+          <label>Severity <select name="severity" required>
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+          </select></label>
+        </div>
+        <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+          <label>Threshold amount <input name="threshold_amount" type="number" step="0.01" placeholder="e.g. 5000" /></label>
+          <label>Window (minutes) <input name="window_minutes" type="number" placeholder="e.g. 60" /></label>
+        </div>
+        <label>Channels (comma-separated) <input name="channels" placeholder="e.g. cash, wire, transfer" /></label>
+        <label>Country scope (comma-separated) <input name="country_scope" placeholder="e.g. RO, BG, HU" /></label>
+        <label>Direction <select name="direction">
+          <option value="">Any</option>
+          <option value="domestic">Domestic</option>
+          <option value="cross_border">Cross-border</option>
+          <option value="remittance">Remittance</option>
+        </select></label>
+        <label class="checkbox"><input name="enabled" type="checkbox" checked /> Enabled</label>
+        <button class="btn primary" type="submit">Save</button>
       </form>
     </div>
   </div>

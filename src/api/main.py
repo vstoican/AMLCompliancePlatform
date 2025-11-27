@@ -8,12 +8,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 
-from .alerts import create_alert
 from .config import settings
 from .db import connection, get_pool
 from .events import publish_event
 from .models import (
     Alert,
+    AlertDefinition,
+    AlertDefinitionCreate,
+    AlertDefinitionUpdate,
     AlertUpdate,
     Customer,
     CustomerCreate,
@@ -181,7 +183,6 @@ async def ingest_transaction(
         )
         tx = await cur.fetchone()
 
-    await evaluate_transaction(conn, payload, customer)
     await publish_event(
         "aml.transaction.ingested",
         {"transaction_id": tx["id"], "customer_id": str(payload.customer_id), "amount": payload.amount},
@@ -214,6 +215,99 @@ async def list_transactions(
         await cur.execute(query, params)
         rows = await cur.fetchall()
     return rows
+
+
+@app.get("/alert-definitions", response_model=List[AlertDefinition])
+async def list_alert_definitions(conn: AsyncConnection = Depends(connection)) -> List[AlertDefinition]:
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute("SELECT * FROM alert_definitions ORDER BY id")
+        rows = await cur.fetchall()
+    return [AlertDefinition(**row) for row in rows]
+
+
+@app.post("/alert-definitions", response_model=AlertDefinition, status_code=status.HTTP_201_CREATED)
+async def create_alert_definition(
+    payload: AlertDefinitionCreate, conn: AsyncConnection = Depends(connection)
+) -> AlertDefinition:
+    # Check if code already exists
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute("SELECT id FROM alert_definitions WHERE code = %s", (payload.code,))
+        if await cur.fetchone():
+            raise HTTPException(status_code=400, detail="Alert definition with this code already exists")
+
+    query = """
+        INSERT INTO alert_definitions
+        (code, name, description, category, enabled, severity, threshold_amount,
+         window_minutes, channels, country_scope, direction, is_system_default)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        RETURNING *
+    """
+    params = (
+        payload.code,
+        payload.name,
+        payload.description,
+        payload.category,
+        payload.enabled,
+        payload.severity,
+        payload.threshold_amount,
+        payload.window_minutes,
+        payload.channels,
+        payload.country_scope,
+        payload.direction,
+        False,  # User-created alerts are never system defaults
+    )
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(query, params)
+        row = await cur.fetchone()
+    return AlertDefinition(**row)
+
+
+@app.patch("/alert-definitions/{definition_id}", response_model=AlertDefinition)
+async def update_alert_definition(
+    definition_id: int, payload: AlertDefinitionUpdate, conn: AsyncConnection = Depends(connection)
+) -> AlertDefinition:
+    updates = {k: v for k, v in payload.dict(exclude_none=True).items()}
+    if not updates:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("SELECT * FROM alert_definitions WHERE id = %s", (definition_id,))
+            row = await cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Alert definition not found")
+            return AlertDefinition(**row)
+
+    set_clause = ", ".join(f"{field} = %s" for field in updates.keys())
+    params = list(updates.values()) + [definition_id]
+    query = f"""
+        UPDATE alert_definitions
+        SET {set_clause}
+        WHERE id = %s
+        RETURNING *
+    """
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(query, params)
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Alert definition not found")
+    return AlertDefinition(**row)
+
+
+@app.delete("/alert-definitions/{definition_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_alert_definition(
+    definition_id: int, conn: AsyncConnection = Depends(connection)
+) -> None:
+    # Check if alert definition exists and is not a system default
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            "SELECT is_system_default FROM alert_definitions WHERE id = %s", (definition_id,)
+        )
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Alert definition not found")
+        if row["is_system_default"]:
+            raise HTTPException(status_code=403, detail="Cannot delete system default alert definitions")
+
+    async with conn.cursor() as cur:
+        await cur.execute("DELETE FROM alert_definitions WHERE id = %s", (definition_id,))
 
 
 @app.get("/alerts", response_model=List[Alert])
@@ -333,28 +427,6 @@ async def log_assessment(
             """,
             (customer_id, score, score, level, "; ".join(reasons)),
         )
-
-
-async def evaluate_transaction(
-    conn: AsyncConnection, payload: TransactionCreate, customer: dict
-) -> None:
-    scenarios: list[tuple[str, str, str, dict]] = []
-
-    if payload.amount >= 10000:
-        scenarios.append(
-            ("transaction_monitoring", "high", "large_transaction", {"amount": payload.amount})
-        )
-    if payload.country and payload.country != customer.get("country"):
-        scenarios.append(
-            ("transaction_monitoring", "medium", "geography_mismatch", {"country": payload.country})
-        )
-    if customer.get("risk_level") == "high":
-        scenarios.append(
-            ("transaction_monitoring", "high", "high_risk_customer_activity", {"risk": "high"})
-        )
-
-    for alert_type, severity, scenario, details in scenarios:
-        await create_alert(conn, payload.customer_id, alert_type, severity, scenario, details)
 
 
 if __name__ == "__main__":
