@@ -1,0 +1,128 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_HOST=timescaledb
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=aml
+      - DATABASE_USER=aml_user
+      - DATABASE_PASSWORD=aml_pass
+      - NATS_URL=nats://nats:4222
+      - TEMPORAL_HOST=temporal
+      - TEMPORAL_PORT=7233
+    ports:
+      - "8000:8000"
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_HOST=timescaledb
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=aml
+      - DATABASE_USER=aml_user
+      - DATABASE_PASSWORD=aml_pass
+      - NATS_URL=nats://nats:4222
+      - TEMPORAL_HOST=temporal
+      - TEMPORAL_PORT=7233
+    command: ["python", "-m", "src.workflows.worker"]
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+      nats:
+        condition: service_started
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "4173:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  timescaledb:
+    image: timescale/timescaledb:2.16.1-pg16
+    environment:
+      - POSTGRES_DB=aml
+      - POSTGRES_USER=aml_user
+      - POSTGRES_PASSWORD=aml_pass
+    ports:
+      - "5434:5432"
+    volumes:
+      - timescaledb-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aml_user -d aml"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  flyway:
+    image: flyway/flyway:10.17-alpine
+    command: ["migrate"]
+    volumes:
+      - ./db/migrations:/flyway/sql
+      - ./db/flyway.conf:/flyway/conf/flyway.conf
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: "no"
+
+  temporal:
+    image: temporalio/auto-setup:1.22.5
+    environment:
+      - DB=postgresql
+      - DB_PORT=5432
+      - POSTGRES_USER=aml_user
+      - POSTGRES_PWD=aml_pass
+      - POSTGRES_DB=temporal
+      - POSTGRES_SEEDS=timescaledb
+      - TEMPORAL_ADDRESS=temporal:7233
+    ports:
+      - "7233:7233"
+    depends_on:
+      nats:
+        condition: service_started
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  temporal-ui:
+    image: temporalio/ui:latest
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=*
+    ports:
+      - "8080:8080"
+    depends_on:
+      - temporal
+    restart: unless-stopped
+
+  nats:
+    image: nats:2.10.17
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["-js"]
+    restart: unless-stopped
+
+volumes:
+  timescaledb-data:

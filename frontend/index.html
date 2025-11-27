@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AML Control Center</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="icon" href="data:," />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="dot"></div>
+        <div>
+          <div class="brand-title">TrustRelay</div>
+          <div class="brand-sub">AML Ops Console</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-target="overview">Overview</button>
+        <button class="nav-item" data-target="customers">Customers</button>
+        <button class="nav-item" data-target="transactions">Transactions</button>
+        <button class="nav-item" data-target="alerts">Alerts</button>
+        <button class="nav-item" data-target="kyc">KYC</button>
+        <button class="nav-item" data-target="reports">Reports</button>
+      </nav>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="search">
+          <input id="searchInput" type="search" placeholder="Search customers, alerts, transactions..." />
+        </div>
+        <div class="actions">
+          <button id="themeToggle" class="btn ghost" aria-label="Switch theme">
+            <span id="themeIcon" class="icon"></span>
+          </button>
+          <select id="riskFilter">
+            <option value="">Risk: All</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+          <button id="refreshBtn" class="btn ghost">Refresh</button>
+        </div>
+      </header>
+
+      <section id="overview" class="panel active">
+        <div class="grid stats">
+          <div class="card">
+            <p class="label">Open Alerts</p>
+            <p id="statAlerts" class="metric">-</p>
+            <span class="badge red">Case load</span>
+          </div>
+          <div class="card">
+            <p class="label">High-Risk Customers</p>
+            <p id="statHighRisk" class="metric">-</p>
+            <span class="badge amber">Risk</span>
+          </div>
+          <div class="card">
+            <p class="label">Upcoming KYC</p>
+            <p id="statKyc" class="metric">-</p>
+            <span class="badge teal">Expiry</span>
+          </div>
+          <div class="card">
+            <p class="label">Past 24h Volume</p>
+            <p id="statVolume" class="metric">-</p>
+            <span class="badge purple">Transactions</span>
+          </div>
+        </div>
+        <div class="grid two overview-lists">
+          <div class="card">
+            <div class="card-head">
+              <h3>Recent Alerts</h3>
+              <button class="btn text" data-target="alerts">View all</button>
+            </div>
+            <div id="recentAlerts" class="list"></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>Recent Transactions</h3>
+              <button class="btn text" data-target="transactions">View all</button>
+            </div>
+            <div id="recentTransactions" class="list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="customers" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Customers</h2>
+            <p class="muted">Risk overview, overrides, and identity freshness</p>
+          </div>
+          <button id="createCustomerBtn" class="btn primary">New Customer</button>
+        </div>
+        <div id="customerTable" class="table"></div>
+      </section>
+
+      <section id="transactions" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Transactions</h2>
+            <p class="muted">Transactions feed</p>
+          </div>
+        </div>
+        <div id="transactionTable" class="table"></div>
+      </section>
+
+      <section id="alerts" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Alerts</h2>
+            <p class="muted">Case management, severity, resolution notes</p>
+          </div>
+          <select id="alertStatusFilter">
+            <option value="">All</option>
+            <option value="open">Open</option>
+            <option value="in_progress">In progress</option>
+            <option value="closed">Closed</option>
+          </select>
+        </div>
+        <div id="alertTable" class="table"></div>
+      </section>
+
+      <section id="kyc" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>KYC</h2>
+            <p class="muted">Expiry monitoring and notifications</p>
+          </div>
+          <button id="runKycBtn" class="btn outline">Run check</button>
+        </div>
+        <div id="kycTable" class="table"></div>
+      </section>
+
+      <section id="reports" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Reports</h2>
+            <p class="muted">High-risk roster and alert history</p>
+          </div>
+          <div class="inline">
+            <input id="reportFrom" type="date" />
+            <input id="reportTo" type="date" />
+            <button id="runReportBtn" class="btn ghost">Run</button>
+          </div>
+        </div>
+        <div class="grid two">
+          <div class="card">
+            <div class="card-head">
+              <h3>High-Risk Customers</h3>
+            </div>
+            <div id="reportHighRisk" class="list"></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>Alerts (filtered)</h3>
+            </div>
+            <div id="reportAlerts" class="list"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-head">
+        <h3 id="modalTitle">Create Customer</h3>
+        <button id="closeModal" class="btn icon">&times;</button>
+      </div>
+      <form id="customerForm" class="form">
+        <label>Full name <input name="full_name" required /></label>
+        <label>Email <input name="email" type="email" /></label>
+        <label>Country <input name="country" /></label>
+        <label>ID expiry <input name="id_document_expiry" type="date" /></label>
+        <label>Geography risk <input name="geography_risk" type="number" min="0" max="10" value="0" /></label>
+        <label>Product risk <input name="product_risk" type="number" min="0" max="10" value="0" /></label>
+        <label>Behavior risk <input name="behavior_risk" type="number" min="0" max="10" value="0" /></label>
+        <label class="checkbox"><input name="pep_flag" type="checkbox" /> PEP</label>
+        <label class="checkbox"><input name="sanctions_hit" type="checkbox" /> Sanctions hit</label>
+        <label>Manual override <input name="risk_override" placeholder="e.g. elevate to high" /></label>
+        <button class="btn primary" type="submit">Create</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    window.API_BASE = window.API_BASE || "http://localhost:8000";
+  </script>
+  <script src="./app.js" type="module"></script>
+</body>
+</html>
