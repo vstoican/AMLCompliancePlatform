@@ -208,34 +208,12 @@
         <div class="panel-head">
           <div>
             <h2>Alerts</h2>
-            <p class="muted">Library-backed, near real-time triggers on the hypertable</p>
+            <p class="muted">Configure alert rules and monitoring thresholds</p>
           </div>
-        </div>
-        <!-- Contextual Search & Filters -->
-        <div class="panel-filters" style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center;">
-          <input id="alertSearch" type="search" placeholder="Search by scenario, type, customer..." style="flex: 1; min-width: 200px;" />
-          <select id="alertStatusFilter">
-            <option value="">All Statuses</option>
-            <option value="open">Open</option>
-            <option value="in_progress">In Progress</option>
-            <option value="closed">Closed</option>
-          </select>
-          <select id="alertSeverityFilter">
-            <option value="">All Severities</option>
-            <option value="critical">Critical</option>
-            <option value="high">High</option>
-            <option value="medium">Medium</option>
-            <option value="low">Low</option>
-          </select>
-          <select id="alertTypeFilter">
-            <option value="">All Types</option>
-            <option value="transaction_monitoring">Transaction Monitoring</option>
-            <option value="kyc">KYC</option>
-            <option value="sanctions">Sanctions</option>
-          </select>
+          <button id="createAlertDefBtn" class="btn primary">New Alert Rule</button>
         </div>
         <div class="card">
-          <div id="alertTable" class="table compact"></div>
+          <div id="alertDefinitions" class="list dense"></div>
         </div>
       </section>
 

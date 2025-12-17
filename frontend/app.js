@@ -393,32 +393,81 @@ function viewCustomer(customerId) {
   }
   hiddenIdField.value = customer.id;
 
-  // Populate form fields
-  customerForm.querySelector('[name="full_name"]').value = customer.full_name || '';
-  customerForm.querySelector('[name="email"]').value = customer.email || '';
-  customerForm.querySelector('[name="country"]').value = customer.country || '';
-  customerForm.querySelector('[name="id_document_expiry"]').value = customer.id_document_expiry || '';
-  customerForm.querySelector('[name="geography_risk"]').value = customer.geography_risk || 1;
-  customerForm.querySelector('[name="product_risk"]').value = customer.product_risk || 1;
-  customerForm.querySelector('[name="behavior_risk"]').value = customer.behavior_risk || 1;
-  customerForm.querySelector('[name="pep_flag"]').checked = customer.pep_flag || false;
-  customerForm.querySelector('[name="sanctions_hit"]').checked = customer.sanctions_hit || false;
-  customerForm.querySelector('[name="risk_override"]').value = customer.risk_override || '';
+  // Populate form fields - Basic Info
+  const setFieldValue = (name, value) => {
+    const field = customerForm.querySelector(`[name="${name}"]`);
+    if (field) {
+      if (field.type === 'checkbox') {
+        field.checked = value || false;
+      } else {
+        field.value = value || '';
+      }
+    }
+  };
+
+  setFieldValue('member_id', customer.member_id);
+  setFieldValue('status', customer.status);
+  setFieldValue('first_name', customer.first_name);
+  setFieldValue('last_name', customer.last_name);
+  setFieldValue('phone_number', customer.phone_number);
+  setFieldValue('email', customer.email);
+
+  // Personal Details
+  setFieldValue('birth_date', customer.birth_date);
+  setFieldValue('identity_number', customer.identity_number);
+  setFieldValue('place_of_birth', customer.place_of_birth);
+  setFieldValue('country_of_birth', customer.country_of_birth);
+
+  // Address
+  setFieldValue('address_county', customer.address_county);
+  setFieldValue('address_city', customer.address_city);
+  setFieldValue('address_street', customer.address_street);
+  setFieldValue('address_house_number', customer.address_house_number);
+
+  // Employment
+  setFieldValue('employer_name', customer.employer_name);
+
+  // Document Info
+  setFieldValue('document_type', customer.document_type);
+  setFieldValue('document_id', customer.document_id);
+  setFieldValue('document_issuer', customer.document_issuer);
+  setFieldValue('document_date_of_issue', customer.document_date_of_issue);
+  setFieldValue('document_date_of_expire', customer.document_date_of_expire);
+
+  // Financial
+  setFieldValue('leanpay_monthly_repayment', customer.leanpay_monthly_repayment);
+  setFieldValue('available_monthly_credit_limit', customer.available_monthly_credit_limit);
+  setFieldValue('available_exposure', customer.available_exposure);
+
+  // Validation & Consent
+  setFieldValue('data_validated', customer.data_validated);
+  setFieldValue('marketing_consent', customer.marketing_consent);
+  setFieldValue('kyc_motion_consent_given', customer.kyc_motion_consent_given);
+
+  // Risk indicators
+  setFieldValue('geography_risk', customer.geography_risk || 1);
+  setFieldValue('product_risk', customer.product_risk || 1);
+  setFieldValue('behavior_risk', customer.behavior_risk || 1);
+  setFieldValue('pep_flag', customer.pep_flag);
+  setFieldValue('sanctions_hit', customer.sanctions_hit);
+  setFieldValue('risk_override', customer.risk_override);
 
   // Make all fields read-only
   const inputs = customerForm.querySelectorAll('input, textarea, select');
   inputs.forEach(input => {
     input.setAttribute('readonly', 'readonly');
-    if (input.type === 'checkbox') {
+    if (input.type === 'checkbox' || input.tagName === 'SELECT') {
       input.disabled = true;
     }
   });
 
   // Update submit button to Close button
   const submitBtn = customerForm.querySelector('[type="submit"]');
-  submitBtn.textContent = 'Close';
-  submitBtn.type = 'button';
-  submitBtn.onclick = () => toggleModal(false);
+  if (submitBtn) {
+    submitBtn.textContent = 'Close';
+    submitBtn.type = 'button';
+    submitBtn.onclick = () => toggleModal(false);
+  }
 
   // Calculate and show risk preview
   calculateRiskPreview();
