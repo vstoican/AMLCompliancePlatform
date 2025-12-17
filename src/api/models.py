@@ -237,3 +237,112 @@ class AlertDefinitionUpdate(BaseModel):
     channels: Optional[list[str]] = None
     country_scope: Optional[list[str]] = None
     direction: Optional[str] = None
+
+
+# =============================================================================
+# TASK MODELS
+# =============================================================================
+
+TASK_TYPES = ["investigation", "kyc_refresh", "document_request", "escalation", "sar_filing"]
+TASK_STATUSES = ["pending", "in_progress", "completed", "cancelled"]
+TASK_PRIORITIES = ["low", "medium", "high", "critical"]
+
+
+class Task(BaseModel):
+    id: int
+    customer_id: Optional[UUID] = None
+    alert_id: Optional[int] = None
+    task_type: str
+    priority: str
+    status: str
+    claimed_by: Optional[str] = None
+    claimed_at: Optional[datetime] = None
+    workflow_id: Optional[str] = None
+    workflow_run_id: Optional[str] = None
+    workflow_status: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    due_date: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    completed_by: Optional[str] = None
+    resolution_notes: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    created_by: Optional[str] = None
+    # Joined fields from related tables
+    customer_name: Optional[str] = None
+    customer_risk_level: Optional[str] = None
+    alert_scenario: Optional[str] = None
+    alert_severity: Optional[str] = None
+
+
+class TaskCreate(BaseModel):
+    customer_id: Optional[UUID] = None
+    alert_id: Optional[int] = None
+    task_type: str = Field(..., description="One of: investigation, kyc_refresh, document_request, escalation, sar_filing")
+    priority: str = Field("medium", description="One of: low, medium, high, critical")
+    title: str
+    description: Optional[str] = None
+    due_date: Optional[datetime] = None
+    details: Optional[dict[str, Any]] = None
+
+
+class TaskUpdate(BaseModel):
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    due_date: Optional[datetime] = None
+    resolution_notes: Optional[str] = None
+
+
+class TaskClaim(BaseModel):
+    claimed_by: str
+
+
+class TaskComplete(BaseModel):
+    completed_by: str
+    resolution_notes: Optional[str] = None
+
+
+# =============================================================================
+# TASK DEFINITION MODELS
+# =============================================================================
+
+class TaskDefinition(BaseModel):
+    id: int
+    alert_scenario: str
+    alert_severity: Optional[list[str]] = None
+    task_type: str
+    default_priority: str
+    due_date_offset_hours: int
+    title_template: str
+    description_template: Optional[str] = None
+    enabled: bool
+    auto_start_workflow: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskDefinitionCreate(BaseModel):
+    alert_scenario: str
+    alert_severity: Optional[list[str]] = None
+    task_type: str = Field(..., description="One of: investigation, kyc_refresh, document_request, escalation, sar_filing")
+    default_priority: str = Field("medium", description="One of: low, medium, high, critical")
+    due_date_offset_hours: int = 48
+    title_template: str = Field(..., description="Supports {scenario}, {customer_name}, {amount} placeholders")
+    description_template: Optional[str] = None
+    enabled: bool = True
+    auto_start_workflow: bool = False
+
+
+class TaskDefinitionUpdate(BaseModel):
+    alert_severity: Optional[list[str]] = None
+    task_type: Optional[str] = None
+    default_priority: Optional[str] = None
+    due_date_offset_hours: Optional[int] = None
+    title_template: Optional[str] = None
+    description_template: Optional[str] = None
+    enabled: Optional[bool] = None
+    auto_start_workflow: Optional[bool] = None

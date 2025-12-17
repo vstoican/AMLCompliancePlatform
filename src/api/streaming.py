@@ -169,3 +169,84 @@ async def stream_alerts(conn: AsyncConnection = Depends(connection)):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+async def generate_task_stream(conn: AsyncConnection) -> AsyncGenerator[str, None]:
+    """
+    Generate SSE stream for task updates
+    Polls database every 1 second for updated tasks
+    """
+    last_updated = datetime.utcnow()
+
+    try:
+        while True:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute(
+                    """
+                    SELECT t.*,
+                           COALESCE(c.first_name || ' ' || c.last_name, c.full_name) as customer_name,
+                           c.risk_level as customer_risk_level,
+                           a.scenario as alert_scenario,
+                           a.severity as alert_severity
+                    FROM tasks t
+                    LEFT JOIN customers c ON c.id = t.customer_id
+                    LEFT JOIN alerts a ON a.id = t.alert_id
+                    WHERE t.updated_at > %s
+                    ORDER BY t.updated_at ASC
+                    LIMIT 20
+                    """,
+                    (last_updated,),
+                )
+
+                rows = await cur.fetchall()
+
+                if rows:
+                    for row in rows:
+                        data = dict(row)
+                        # Convert types for JSON serialization
+                        if data.get("customer_id"):
+                            data["customer_id"] = str(data["customer_id"])
+                        if data.get("created_at"):
+                            data["created_at"] = data["created_at"].isoformat()
+                        if data.get("updated_at"):
+                            data["updated_at"] = data["updated_at"].isoformat()
+                        if data.get("due_date"):
+                            data["due_date"] = data["due_date"].isoformat()
+                        if data.get("claimed_at"):
+                            data["claimed_at"] = data["claimed_at"].isoformat()
+                        if data.get("completed_at"):
+                            data["completed_at"] = data["completed_at"].isoformat()
+                        if data.get("details") is None:
+                            data["details"] = {}
+
+                        yield f"data: {json.dumps(data)}\n\n"
+                        last_updated = row["updated_at"]
+
+            # Check for task updates every second
+            await asyncio.sleep(1)
+
+    except asyncio.CancelledError:
+        pass
+
+
+@router.get("/stream/tasks")
+async def stream_tasks(conn: AsyncConnection = Depends(connection)):
+    """
+    Server-Sent Events endpoint for real-time task updates
+
+    Usage:
+        const eventSource = new EventSource('http://localhost:8000/stream/tasks');
+        eventSource.onmessage = (event) => {
+            const task = JSON.parse(event.data);
+            console.log(task);
+        };
+    """
+    return StreamingResponse(
+        generate_task_stream(conn),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

@@ -36,6 +36,9 @@ const state = {
   transactions: [],
   alerts: [],
   alertDefinitions: [],
+  tasks: [],
+  taskDefinitions: [],
+  selectedTask: null,
   reports: {
     highRisk: [],
     alerts: [],
@@ -48,6 +51,9 @@ const state = {
   // Selected customer for detail view
   selectedCustomerId: null,
 };
+
+// Current user (in production, get from auth)
+const CURRENT_USER = 'analyst@company.com';
 
 const navButtons = document.querySelectorAll(".nav-item");
 const accordionTriggers = document.querySelectorAll(".accordion-trigger");
@@ -71,6 +77,13 @@ const alertStatusFilter = document.getElementById("alertStatusFilter");
 const alertSeverityFilter = document.getElementById("alertSeverityFilter");
 const alertTypeFilter = document.getElementById("alertTypeFilter");
 const alertStatusFilter2 = document.getElementById("alertStatusFilter2");
+
+// Task filters
+const taskSearch = document.getElementById("taskSearch");
+const taskStatusFilter = document.getElementById("taskStatusFilter");
+const taskTypeFilter = document.getElementById("taskTypeFilter");
+const taskPriorityFilter = document.getElementById("taskPriorityFilter");
+const taskUnclaimedOnly = document.getElementById("taskUnclaimedOnly");
 
 const themeToggle = document.getElementById("themeToggle");
 const themeIcon = document.getElementById("themeIcon");
@@ -96,9 +109,9 @@ const routes = {
   '/customers': 'customers',
   '/reports': 'reports',
   '/transactions': 'transactions',
-  '/alerts': 'alerts',
   '/alert-definitions': 'alert-definitions',
   '/alert-stream': 'alert-stream',
+  '/tasks': 'tasks',
   '/settings': 'settings',
   '/webhooks': 'webhooks',
   '/api-keys': 'api-keys',
@@ -112,20 +125,24 @@ const routes = {
   '/workflow-definitions': 'workflow-definitions',
   '/workflow-executions': 'workflow-executions',
 };
+const legacyRoutes = {
+  '/alerts': '/alert-stream',
+};
 
 // Navigate to a route
 function navigate(path, queryParams = {}) {
-  const panelId = routes[path] || routes['/'];
+  const normalizedPath = legacyRoutes[path] || path;
+  const panelId = routes[normalizedPath] || routes['/'];
 
   // Build URL with query params
-  let url = path;
+  let url = normalizedPath;
   const params = new URLSearchParams(queryParams);
   if (params.toString()) {
-    url = `${path}?${params.toString()}`;
+    url = `${normalizedPath}?${params.toString()}`;
   }
 
-  activatePanel(panelId, path);
-  window.history.pushState({ path, queryParams }, '', url);
+  activatePanel(panelId, normalizedPath);
+  window.history.pushState({ path: normalizedPath, queryParams }, '', url);
 }
 
 // Navigate to customer detail view
@@ -191,6 +208,13 @@ if (alertSearch) alertSearch.addEventListener("input", () => renderAlerts());
 if (alertStatusFilter) alertStatusFilter.addEventListener("change", () => renderAlerts());
 if (alertSeverityFilter) alertSeverityFilter.addEventListener("change", () => renderAlerts());
 if (alertTypeFilter) alertTypeFilter.addEventListener("change", () => renderAlerts());
+
+// Contextual filter event listeners - Tasks
+if (taskSearch) taskSearch.addEventListener("input", () => renderTasks());
+if (taskStatusFilter) taskStatusFilter.addEventListener("change", () => loadTasks());
+if (taskTypeFilter) taskTypeFilter.addEventListener("change", () => loadTasks());
+if (taskPriorityFilter) taskPriorityFilter.addEventListener("change", () => loadTasks());
+if (taskUnclaimedOnly) taskUnclaimedOnly.addEventListener("change", () => loadTasks());
 
 runReportBtn.addEventListener("click", handleRunReport);
 themeToggle.addEventListener("click", toggleTheme);
@@ -721,7 +745,6 @@ function activatePanel(name, path, updateHistory = true) {
     // Case Management
     'customers': 'Customers',
     'transactions': 'Transactions',
-    'alerts': 'Alerts',
     'alert-stream': 'Alert Stream',
     // Rules & Automation
     'alert-definitions': 'Alert Definitions',
@@ -790,6 +813,19 @@ async function loadAlerts() {
   state.alerts = data ?? sampleAlerts();
   renderAlerts();
   renderOverview();
+}
+
+async function loadTasks() {
+  const params = new URLSearchParams();
+  if (taskStatusFilter?.value) params.append("status", taskStatusFilter.value);
+  if (taskTypeFilter?.value) params.append("task_type", taskTypeFilter.value);
+  if (taskPriorityFilter?.value) params.append("priority", taskPriorityFilter.value);
+  if (taskUnclaimedOnly?.checked) params.append("unclaimed_only", "true");
+
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const data = await fetchJSON(`/tasks${query}`);
+  state.tasks = data ?? [];
+  renderTasks();
 }
 
 async function loadAlertDefinitions() {
@@ -1171,12 +1207,12 @@ function renderAlerts() {
   const table = `
     <table>
       <thead>
-        <tr><th>Scenario</th><th>Definition</th><th>Type</th><th>Severity</th><th>Status</th><th>Created</th></tr>
+        <tr><th>Scenario</th><th>Definition</th><th>Type</th><th>Severity</th><th>Status</th><th>Created</th><th>Actions</th></tr>
       </thead>
       <tbody>
         ${rows.length === 0 ? `
           <tr>
-            <td colspan="6" style="text-align: center; padding: 24px; color: var(--muted);">
+            <td colspan="7" style="text-align: center; padding: 24px; color: var(--muted);">
               No alerts found
             </td>
           </tr>
@@ -1190,15 +1226,128 @@ function renderAlerts() {
             <td><span class="badge ${severityBadge(a.severity)}">${a.severity}</span></td>
             <td><span class="badge ${alertStatusBadge(a.status)}">${a.status}</span></td>
             <td>${new Date(a.created_at).toLocaleString()}</td>
+            <td>
+              <button class="btn ghost alert-action" data-alert-id="${a.id}" data-alert-action="investigation">
+                Start investigation
+              </button>
+            </td>
           </tr>`
           )
           .join("")}
       </tbody>
     </table>
   `;
-  document.getElementById("alertTable").innerHTML = table;
-  const el2 = document.getElementById("alertTable2");
-  if (el2) el2.innerHTML = table;
+  const alertTable = document.getElementById("alertTable");
+  const alertTable2 = document.getElementById("alertTable2");
+  if (alertTable) alertTable.innerHTML = table;
+  if (alertTable2) alertTable2.innerHTML = table;
+
+  document.querySelectorAll(".alert-action").forEach((btn) => {
+    btn.addEventListener("click", handleAlertAction);
+  });
+}
+
+function renderTasks() {
+  const q = (taskSearch?.value || "").toLowerCase();
+  const status = taskStatusFilter?.value || "";
+  const type = taskTypeFilter?.value || "";
+  const priority = taskPriorityFilter?.value || "";
+  const unclaimedOnly = taskUnclaimedOnly?.checked;
+
+  const rows = state.tasks.filter((t) => {
+    const matchesSearch =
+      !q ||
+      (t.title && t.title.toLowerCase().includes(q)) ||
+      (t.description && t.description.toLowerCase().includes(q)) ||
+      (t.customer_name && t.customer_name.toLowerCase().includes(q));
+    const matchesStatus = !status || t.status === status;
+    const matchesType = !type || t.task_type === type;
+    const matchesPriority = !priority || t.priority === priority;
+    const matchesUnclaimed = !unclaimedOnly || !t.claimed_by;
+    return matchesSearch && matchesStatus && matchesType && matchesPriority && matchesUnclaimed;
+  });
+
+  const statusBadge = (s) => {
+    const map = {
+      pending: "amber",
+      in_progress: "blue",
+      completed: "teal",
+      cancelled: "purple",
+    };
+    return map[s] || "muted";
+  };
+
+  const list = rows
+    .map(
+      (t) => `
+        <div class="row">
+          <div>
+            <div class="title">${t.title}</div>
+            <div class="subtitle">${t.description || ""}</div>
+            <div class="chips">
+              <span class="chip">${t.task_type}</span>
+              <span class="chip ${statusBadge(t.status)}">${t.status}</span>
+              <span class="chip">${t.priority}</span>
+              ${t.alert_id ? `<span class="chip">Alert #${t.alert_id}</span>` : ""}
+            </div>
+          </div>
+          <div class="row-actions" style="gap: 8px;">
+            ${t.workflow_status ? `<span class="badge">${t.workflow_status}</span>` : ""}
+            <span class="badge ${statusBadge(t.status)}">${t.status}</span>
+          </div>
+        </div>
+      `
+    )
+    .join("");
+
+  const container = document.getElementById("taskList");
+  if (container) container.innerHTML = list || emptyState("No tasks yet");
+}
+
+async function handleAlertAction(event) {
+  const btn = event.currentTarget;
+  const alertId = parseInt(btn.dataset.alertId, 10);
+  const action = btn.dataset.alertAction;
+  if (!alertId || !action) return;
+
+  try {
+    await startAlertWorkflow(alertId, action);
+  } catch (error) {
+    console.error("Alert action failed", error);
+    showToast("error", "Action failed", error.message || "Unable to update alert");
+  }
+}
+
+async function startAlertWorkflow(alertId, action = "investigation") {
+  const result = await fetchJSON(`/workflows/alert-handling/start?alert_id=${alertId}&action=${action}`, {
+    method: "POST",
+  });
+  if (result) {
+    showToast("success", "Workflow started", `Alert ${alertId} investigation started`);
+    await loadAlerts();
+    await loadTasks();
+    await loadWorkflows();
+  } else {
+    throw new Error("Unable to start workflow");
+  }
+}
+
+// Deprecated helper kept for potential future reuse
+async function updateAlertStatus(alertId, status, notes) {
+  const result = await fetchJSON(`/alerts/${alertId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      status,
+      resolution_notes: notes,
+      resolved_by: "console",
+    }),
+  });
+  if (result) {
+    showToast("success", "Alert updated", `Alert ${alertId} set to ${status}`);
+    await loadAlerts();
+  } else {
+    throw new Error("Update failed");
+  }
 }
 
 function renderAlertDefinitions() {
@@ -1230,9 +1379,10 @@ function renderAlertDefinitions() {
       `
     )
     .join("");
-  document.getElementById("alertDefinitions").innerHTML = list || emptyState("No definitions");
-  const el2 = document.getElementById("alertDefinitions2");
-  if (el2) el2.innerHTML = list || emptyState("No definitions");
+  const defList = document.getElementById("alertDefinitions");
+  const defList2 = document.getElementById("alertDefinitions2");
+  if (defList) defList.innerHTML = list || emptyState("No definitions");
+  if (defList2) defList2.innerHTML = list || emptyState("No definitions");
 
   // Toggle enable/disable
   document.querySelectorAll("[data-definition-id]").forEach((input) => {
@@ -1539,6 +1689,7 @@ async function loadAll() {
     loadCustomers(),
     loadTransactions(),
     loadAlerts(),
+    loadTasks(),
     loadAlertDefinitions(),
     loadReports(),
   ]);
@@ -1680,8 +1831,8 @@ function startAlertStream() {
           state.alerts = state.alerts.slice(0, 100);
         }
 
-        // Re-render alerts if on alerts panel
-        const alertsPanel = document.getElementById('alerts');
+        // Re-render alerts if viewing the alert stream
+        const alertsPanel = document.getElementById('alert-stream');
         if (alertsPanel && alertsPanel.classList.contains('active')) {
           renderAlerts();
           renderOverview();
@@ -1724,7 +1875,8 @@ initTheme();
 
 // Load the correct panel based on current URL
 const currentPath = window.location.pathname;
-const panelId = routes[currentPath] || routes['/'];
+const normalizedPath = legacyRoutes[currentPath] || currentPath;
+const panelId = routes[normalizedPath] || routes['/'];
 
 // Check for query parameters (e.g., customer ID)
 const urlParams = new URLSearchParams(window.location.search);
@@ -1733,11 +1885,11 @@ if (customerId) {
   state.selectedCustomerId = customerId;
 }
 
-activatePanel(panelId, currentPath, false);
+activatePanel(panelId, normalizedPath, false);
 
-// Set initial history state if not present
-if (!window.history.state) {
-  window.history.replaceState({ path: currentPath }, '', currentPath);
+// Set initial history state; normalize legacy paths
+if (!window.history.state || normalizedPath !== currentPath) {
+  window.history.replaceState({ path: normalizedPath }, '', normalizedPath);
 }
 
 loadAll().then(() => {
@@ -2284,6 +2436,9 @@ const workflowModal = document.getElementById('workflowModal');
 const workflowForm = document.getElementById('workflowForm');
 const closeWorkflowModalBtn = document.getElementById('closeWorkflowModal');
 const workflowDetailsPanel = document.getElementById('workflowDetailsPanel');
+const refreshTaskWorkflowsBtn = document.getElementById('refreshTaskWorkflows');
+const runningWorkflowsList = document.getElementById('runningWorkflowsList');
+const completedWorkflowsList = document.getElementById('completedWorkflowsList');
 
 let allWorkflows = [];
 let currentWorkflowType = '';
@@ -2386,6 +2541,7 @@ async function loadWorkflows() {
     allWorkflows = workflows;
     updateWorkflowStats();
     renderWorkflows();
+    renderTaskWorkflows();
   } catch (error) {
     console.error('Error loading workflows:', error);
     const listView = document.getElementById('workflowsListView');
@@ -2495,6 +2651,55 @@ function formatRelativeTime(dateString) {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
+function renderTaskWorkflows() {
+  if (!runningWorkflowsList || !completedWorkflowsList) return;
+
+  const running = allWorkflows.filter(wf => wf.status === 'RUNNING').slice(0, 5);
+  const closed = allWorkflows
+    .filter(wf => ['COMPLETED', 'FAILED', 'CANCELED'].includes(wf.status))
+    .sort((a, b) => new Date(b.close_time || b.start_time) - new Date(a.close_time || a.start_time))
+    .slice(0, 6);
+
+  const statusBadge = (status) => {
+    const map = {
+      'COMPLETED': 'teal',
+      'RUNNING': 'amber',
+      'FAILED': 'red',
+      'CANCELED': 'purple',
+    };
+    return map[status] || 'muted';
+  };
+
+  const renderItem = (wf) => {
+    const title = wf.workflow_type || 'Workflow';
+    const started = wf.start_time ? formatRelativeTime(wf.start_time) : '-';
+    const duration = wf.start_time
+      ? formatDuration(new Date(wf.close_time || Date.now()) - new Date(wf.start_time))
+      : '-';
+    return `
+      <div class="row" style="align-items: center;">
+        <div>
+          <div class="title">${title}</div>
+          <div class="subtitle" style="font-family: monospace; font-size: 11px;">${wf.workflow_id.substring(0, 22)}...</div>
+          <div class="subtitle">Started ${started} • ${duration}</div>
+        </div>
+        <div class="row-actions" style="gap: 8px;">
+          <span class="badge ${statusBadge(wf.status)}">${wf.status}</span>
+          <button class="btn ghost" onclick="viewWorkflowDetails('${wf.workflow_id}', '${wf.run_id}')">Details</button>
+        </div>
+      </div>
+    `;
+  };
+
+  runningWorkflowsList.innerHTML = running.length
+    ? running.map(renderItem).join('')
+    : emptyState("No running workflows");
+
+  completedWorkflowsList.innerHTML = closed.length
+    ? closed.map(renderItem).join('')
+    : emptyState("No closed workflows yet");
+}
+
 // Render workflows as a list view
 function renderWorkflows() {
   const statusFilter = workflowStatusFilter?.value || '';
@@ -2556,7 +2761,8 @@ function renderWorkflows() {
     // Workflow type config
     const typeConfig = {
       'KycRefreshWorkflow': { name: 'KYC Expiration Check', icon: '📋', color: 'var(--primary)' },
-      'SanctionsScreeningWorkflow': { name: 'Sanctions Screening', icon: '🛡️', color: 'var(--red)' }
+      'SanctionsScreeningWorkflow': { name: 'Sanctions Screening', icon: '🛡️', color: 'var(--red)' },
+      'AlertHandlingWorkflow': { name: 'Alert Handling', icon: '🚨', color: 'var(--amber)' },
     };
     const type = typeConfig[wf.workflow_type] || { name: wf.workflow_type, icon: '⚙️', color: 'var(--muted)' };
 
@@ -2758,6 +2964,9 @@ window.closeWorkflowDetails = closeWorkflowDetails;
 if (refreshWorkflowsBtn) {
   refreshWorkflowsBtn.addEventListener('click', loadWorkflows);
 }
+if (refreshTaskWorkflowsBtn) {
+  refreshTaskWorkflowsBtn.addEventListener('click', loadWorkflows);
+}
 
 // Filters
 if (workflowStatusFilter) {
@@ -2772,6 +2981,17 @@ const workflowExecutionsNavItem = document.querySelector('[data-target="workflow
 if (workflowExecutionsNavItem) {
   workflowExecutionsNavItem.addEventListener('click', () => {
     setTimeout(loadWorkflows, 100);
+  });
+}
+
+// Load workflows when viewing tasks to surface running/closed workflows under task management
+const tasksNavItem = document.querySelector('[data-target="tasks"]');
+if (tasksNavItem) {
+  tasksNavItem.addEventListener('click', () => {
+    setTimeout(() => {
+      loadTasks();
+      loadWorkflows();
+    }, 150);
   });
 }
 

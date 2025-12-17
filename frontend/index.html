@@ -31,7 +31,7 @@
           <div class="accordion-panel">
             <button class="nav-item" data-target="customers">Customers</button>
             <button class="nav-item" data-target="transactions">Transactions</button>
-            <button class="nav-item" data-target="alerts">Alerts</button>
+            <button class="nav-item" data-target="tasks">Tasks</button>
             <button class="nav-item" data-target="alert-stream">Alert Stream</button>
           </div>
         </div>
@@ -100,7 +100,7 @@
           <div class="card">
             <div class="card-head">
               <h3>Recent Alerts</h3>
-              <button class="btn text" data-target="alerts">View all</button>
+              <button class="btn text" data-target="alert-stream">View all</button>
             </div>
             <div id="recentAlerts" class="list"></div>
           </div>
@@ -204,19 +204,6 @@
         <div id="transactionTable" class="table"></div>
       </section>
 
-      <section id="alerts" class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>Alerts</h2>
-            <p class="muted">Configure alert rules and monitoring thresholds</p>
-          </div>
-          <button id="createAlertDefBtn" class="btn primary">New Alert Rule</button>
-        </div>
-        <div class="card">
-          <div id="alertDefinitions" class="list dense"></div>
-        </div>
-      </section>
-
       <section id="alert-definitions" class="panel">
         <div class="panel-head">
           <div>
@@ -245,6 +232,164 @@
         </div>
         <div id="alertTable2" class="table"></div>
       </section>
+
+      <!-- TASKS SECTION -->
+      <section id="tasks" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Task Queue</h2>
+            <p class="muted">Shared compliance task queue - claim and work tasks</p>
+          </div>
+          <button id="createTaskBtn" class="btn primary">New Task</button>
+        </div>
+
+        <!-- Task Stats -->
+        <div class="grid stats" style="margin-bottom: 20px;">
+          <div class="card">
+            <p class="label">Pending Tasks</p>
+            <p id="taskPendingCount" class="metric">-</p>
+            <span class="badge amber">Unclaimed</span>
+          </div>
+          <div class="card">
+            <p class="label">In Progress</p>
+            <p id="taskInProgressCount" class="metric">-</p>
+            <span class="badge teal">Working</span>
+          </div>
+          <div class="card">
+            <p class="label">Critical Priority</p>
+            <p id="taskCriticalCount" class="metric">-</p>
+            <span class="badge red">Urgent</span>
+          </div>
+          <div class="card">
+            <p class="label">Due Today</p>
+            <p id="taskDueTodayCount" class="metric">-</p>
+            <span class="badge purple">Deadline</span>
+          </div>
+        </div>
+
+        <!-- Task Filters -->
+        <div class="panel-filters" style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center;">
+          <input id="taskSearch" type="search" placeholder="Search tasks..." style="flex: 1; min-width: 200px;" />
+          <select id="taskStatusFilter">
+            <option value="">All Status</option>
+            <option value="pending">Pending</option>
+            <option value="in_progress">In Progress</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          <select id="taskTypeFilter">
+            <option value="">All Types</option>
+            <option value="investigation">Investigation</option>
+            <option value="kyc_refresh">KYC Refresh</option>
+            <option value="document_request">Document Request</option>
+            <option value="escalation">Escalation</option>
+            <option value="sar_filing">SAR Filing</option>
+          </select>
+          <select id="taskPriorityFilter">
+            <option value="">All Priorities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" id="taskUnclaimedOnly" />
+            <span>Unclaimed only</span>
+          </label>
+        </div>
+
+        <div class="grid two" style="margin-bottom: 16px; gap: 12px;">
+          <div class="card">
+            <div class="card-head">
+              <h3>Running workflows</h3>
+              <button class="btn ghost" id="refreshTaskWorkflows" style="padding: 6px 10px;">Refresh</button>
+            </div>
+            <div id="runningWorkflowsList" class="list dense"></div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>Recently closed workflows</h3>
+            </div>
+            <div id="completedWorkflowsList" class="list dense"></div>
+          </div>
+        </div>
+
+        <!-- Task List -->
+        <div id="taskList" class="task-list"></div>
+      </section>
+
+      <!-- Task Detail Modal -->
+      <div id="taskDetailModal" class="modal hidden">
+        <div class="modal-content" style="max-width: 700px;">
+          <div class="modal-head">
+            <h3 id="taskDetailTitle">Task Details</h3>
+            <button id="closeTaskDetailModal" class="btn ghost">X</button>
+          </div>
+          <div id="taskDetailContent"></div>
+          <div id="taskDetailActions" class="modal-actions" style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px;"></div>
+        </div>
+      </div>
+
+      <!-- Task Create Modal -->
+      <div id="taskModal" class="modal hidden">
+        <div class="modal-content" style="max-width: 600px;">
+          <div class="modal-head">
+            <h3 id="taskModalTitle">Create New Task</h3>
+            <button id="closeTaskModal" class="btn ghost">X</button>
+          </div>
+          <form id="taskForm">
+            <div class="form-group">
+              <label>Task Type</label>
+              <select name="task_type" required>
+                <option value="investigation">Investigation</option>
+                <option value="kyc_refresh">KYC Refresh</option>
+                <option value="document_request">Document Request</option>
+                <option value="escalation">Escalation</option>
+                <option value="sar_filing">SAR Filing</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Customer (Optional)</label>
+              <select name="customer_id" id="taskCustomerSelect">
+                <option value="">Select customer...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Related Alert (Optional)</label>
+              <select name="alert_id" id="taskAlertSelect">
+                <option value="">Select alert...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Title</label>
+              <input type="text" name="title" required placeholder="Task title" />
+            </div>
+            <div class="form-group">
+              <label>Description</label>
+              <textarea name="description" rows="3" placeholder="Task description"></textarea>
+            </div>
+            <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+              <div class="form-group">
+                <label>Priority</label>
+                <select name="priority">
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                  <option value="high">High</option>
+                  <option value="critical">Critical</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Due Date</label>
+                <input type="datetime-local" name="due_date" />
+              </div>
+            </div>
+            <div class="form-actions" style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px;">
+              <button type="button" class="btn ghost" onclick="toggleTaskModal(false)">Cancel</button>
+              <button type="submit" class="btn primary">Create Task</button>
+            </div>
+          </form>
+        </div>
+      </div>
 
       <section id="workflow-definitions" class="panel">
         <div class="panel-head">

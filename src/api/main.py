@@ -37,6 +37,7 @@ from .models import (
 )
 from .risk import calculate_risk
 from .streaming import router as streaming_router
+from .tasks import router as tasks_router, definition_router as task_definitions_router
 
 app = FastAPI(title="AML Compliance MVP", version="0.1.0")
 
@@ -50,6 +51,10 @@ app.add_middleware(
 
 # Register SSE streaming router
 app.include_router(streaming_router)
+
+# Register task management routers
+app.include_router(tasks_router)
+app.include_router(task_definitions_router)
 
 # Global Temporal client
 temporal_client: Optional[TemporalClient] = None
@@ -607,7 +612,10 @@ async def update_alert(
             SET status = COALESCE(%s, status),
                 resolution_notes = COALESCE(%s, resolution_notes),
                 resolved_by = COALESCE(%s, resolved_by),
-                resolved_at = CASE WHEN %s IS NOT NULL THEN NOW() ELSE resolved_at END
+                resolved_at = CASE
+                    WHEN %s IN ('resolved', 'dismissed', 'closed') THEN NOW()
+                    ELSE resolved_at
+                END
             WHERE id = %s
             RETURNING *
             """,
@@ -774,6 +782,126 @@ async def start_sanctions_workflow(customer_id: UUID, hit_detected: bool = False
         }
     except Exception as e:
         logging.error(f"Error starting sanctions workflow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/workflows/alert-handling/start")
+async def start_alert_workflow(
+    alert_id: int,
+    action: str = "triage",
+    resolved_by: Optional[str] = None,
+    conn: AsyncConnection = Depends(connection),
+) -> dict:
+    """Start an alert handling workflow for a specific alert"""
+    if not temporal_client:
+        raise HTTPException(status_code=503, detail="Temporal client not connected")
+
+    try:
+        from src.workflows.worker import AlertHandlingWorkflow, InvestigationWorkflow
+
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("SELECT * FROM alerts WHERE id = %s", (alert_id,))
+            alert = await cur.fetchone()
+            if not alert:
+                raise HTTPException(status_code=404, detail="Alert not found")
+
+            # Mark alert as investigating
+            await cur.execute(
+                """
+                UPDATE alerts
+                SET status = 'investigating'
+                WHERE id = %s
+                """,
+                (alert_id,),
+            )
+
+            # Reuse existing investigation task for this alert if it exists
+            await cur.execute(
+                """
+                SELECT * FROM tasks
+                WHERE alert_id = %s
+                  AND task_type = 'investigation'
+                  AND status IN ('pending', 'in_progress')
+                LIMIT 1
+                """,
+                (alert_id,),
+            )
+            task = await cur.fetchone()
+
+            if not task:
+                priority = {
+                    "critical": "critical",
+                    "high": "high",
+                    "medium": "medium",
+                    "low": "low",
+                }.get((alert.get("severity") or "").lower(), "medium")
+
+                title = f"Investigate alert {alert_id}"
+                description = alert.get("scenario") or "Investigate triggered alert"
+                details = Jsonb({
+                    "alert_id": alert_id,
+                    "action": action,
+                    "scenario": alert.get("scenario"),
+                    "severity": alert.get("severity"),
+                    "source": "alert-handling",
+                })
+
+                await cur.execute(
+                    """
+                    INSERT INTO tasks (
+                        customer_id, alert_id, task_type, priority,
+                        title, description, details, created_by
+                    )
+                    VALUES (%s, %s, 'investigation', %s, %s, %s, %s, %s)
+                    RETURNING *
+                    """,
+                    (
+                        alert.get("customer_id"),
+                        alert_id,
+                        priority,
+                        title,
+                        description,
+                        details,
+                        resolved_by or "system",
+                    ),
+                )
+                task = await cur.fetchone()
+
+            workflow_id = f"alert-{alert_id}-investigation-{datetime.utcnow().timestamp()}"
+
+            # Start investigation workflow tied to the task
+            handle = await temporal_client.start_workflow(
+                InvestigationWorkflow.run,
+                args=[
+                    str(task["customer_id"]) if task["customer_id"] else None,
+                    task["id"],
+                    dict(task["details"]) if task["details"] else {}
+                ],
+                id=workflow_id,
+                task_queue="aml-tasks",
+            )
+
+            # Update task with workflow info
+            await cur.execute(
+                """
+                UPDATE tasks
+                SET workflow_id = %s,
+                    workflow_run_id = %s,
+                    workflow_status = 'RUNNING'
+                WHERE id = %s
+                """,
+                (handle.id, handle.result_run_id, task["id"]),
+            )
+
+            return {
+                "workflow_id": handle.id,
+                "run_id": handle.result_run_id,
+                "workflow_type": "InvestigationWorkflow",
+                "status": "RUNNING",
+                "task_id": task["id"],
+            }
+    except Exception as e:
+        logging.error(f"Error starting alert workflow: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
