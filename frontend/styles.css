@@ -65,6 +65,12 @@ body {
   gap: 12px;
   align-items: center;
 }
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  object-fit: cover;
+}
 .brand .dot {
   width: 12px;
   height: 12px;
