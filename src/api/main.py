@@ -1,16 +1,28 @@
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 from uuid import UUID
+import json
+import logging
 
 import uvicorn
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
+
+from temporalio.client import Client as TemporalClient
 
 from .config import settings
 from .db import connection, get_pool
-from .events import publish_event
+from .events import publish_event, connect_jetstream, close_jetstream
 from .models import (
     Alert,
     AlertDefinition,
@@ -24,6 +36,7 @@ from .models import (
     TransactionCreate,
 )
 from .risk import calculate_risk
+from .streaming import router as streaming_router
 
 app = FastAPI(title="AML Compliance MVP", version="0.1.0")
 
@@ -35,14 +48,45 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Register SSE streaming router
+app.include_router(streaming_router)
+
+# Global Temporal client
+temporal_client: Optional[TemporalClient] = None
+
 
 @app.on_event("startup")
 async def startup_event() -> None:
+    """Initialize connections on startup"""
+    global temporal_client
+
+    # Initialize database pool
     get_pool()
+
+    # Initialize JetStream connection
+    await connect_jetstream()
+
+    # Initialize Temporal client
+    try:
+        temporal_client = await TemporalClient.connect(
+            f"{settings.temporal_host}:{settings.temporal_port}"
+        )
+        logging.info("Connected to Temporal server")
+    except Exception as e:
+        logging.error(f"Failed to connect to Temporal: {e}")
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
+    """Gracefully close connections on shutdown"""
+    # Close JetStream connection
+    await close_jetstream()
+
+    # Close Temporal client
+    if temporal_client:
+        await temporal_client.close()
+
+    # Close database pool
     if get_pool():
         await get_pool().close()
 
@@ -57,24 +101,78 @@ async def create_customer(
     payload: CustomerCreate, conn: AsyncConnection = Depends(connection)
 ) -> Customer:
     score, level, reasons = calculate_risk(payload.indicators, payload.risk_override)
+    full_name = f"{payload.first_name} {payload.last_name}".strip()
+
     query = """
-        INSERT INTO customers (full_name, email, country, risk_score, risk_level, risk_override, id_document_expiry, pep_flag, sanctions_hit)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO customers (
+            member_id, first_name, last_name, full_name, phone_number, status, email,
+            birth_date, identity_number, place_of_birth, country_of_birth,
+            address_county, address_city, address_street, address_house_number,
+            address_block_number, address_entrance, address_apartment,
+            employer_name,
+            document_type, document_id, document_issuer, document_date_of_expire, document_date_of_issue,
+            leanpay_monthly_repayment, available_monthly_credit_limit, available_exposure,
+            data_validated, marketing_consent, kyc_motion_consent_given,
+            risk_score, risk_level, risk_override, pep_flag, sanctions_hit,
+            geography_risk, product_risk, behavior_risk,
+            application_time
+        )
+        VALUES (
+            %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s,
+            %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s,
+            NOW()
+        )
         RETURNING *
     """
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
             query,
             (
-                payload.full_name,
+                payload.member_id,
+                payload.first_name,
+                payload.last_name,
+                full_name,
+                payload.phone_number,
+                payload.status,
                 payload.email,
-                payload.country,
+                payload.birth_date,
+                payload.identity_number,
+                payload.place_of_birth,
+                payload.country_of_birth,
+                payload.address_county,
+                payload.address_city,
+                payload.address_street,
+                payload.address_house_number,
+                payload.address_block_number,
+                payload.address_entrance,
+                payload.address_apartment,
+                payload.employer_name,
+                payload.document_type,
+                payload.document_id,
+                payload.document_issuer,
+                payload.document_date_of_expire,
+                payload.document_date_of_issue,
+                payload.leanpay_monthly_repayment,
+                payload.available_monthly_credit_limit,
+                payload.available_exposure,
+                payload.data_validated,
+                payload.marketing_consent,
+                payload.kyc_motion_consent_given,
                 score,
                 level,
                 payload.risk_override,
-                payload.id_document_expiry,
                 payload.indicators.pep_flag,
                 payload.indicators.sanctions_hit,
+                payload.indicators.geography_risk,
+                payload.indicators.product_risk,
+                payload.indicators.behavior_risk,
             ),
         )
         customer_row = await cur.fetchone()
@@ -88,7 +186,8 @@ async def create_customer(
 @app.get("/customers", response_model=List[Customer])
 async def list_customers(
     risk_level: Optional[str] = Query(None),
-    country: Optional[str] = Query(None),
+    status: Optional[str] = Query(None),
+    data_validated: Optional[str] = Query(None),
     limit: int = Query(100, le=500),
     conn: AsyncConnection = Depends(connection),
 ) -> List[Customer]:
@@ -97,9 +196,12 @@ async def list_customers(
     if risk_level:
         clauses.append("risk_level = %s")
         params.append(risk_level)
-    if country:
-        clauses.append("country = %s")
-        params.append(country)
+    if status:
+        clauses.append("status = %s")
+        params.append(status)
+    if data_validated:
+        clauses.append("data_validated = %s")
+        params.append(data_validated)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
     query = f"SELECT * FROM customers {where} ORDER BY created_at DESC LIMIT %s"
@@ -118,6 +220,114 @@ async def get_customer(customer_id: UUID, conn: AsyncConnection = Depends(connec
         row = await cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Customer not found")
+    return Customer(**row)
+
+
+@app.patch("/customers/{customer_id}", response_model=Customer)
+async def update_customer(
+    customer_id: UUID,
+    payload: CustomerCreate,
+    conn: AsyncConnection = Depends(connection),
+) -> Customer:
+    score, level, reasons = calculate_risk(payload.indicators, payload.risk_override)
+    full_name = f"{payload.first_name} {payload.last_name}".strip()
+
+    query = """
+        UPDATE customers
+        SET member_id = %s,
+            first_name = %s,
+            last_name = %s,
+            full_name = %s,
+            phone_number = %s,
+            status = %s,
+            email = %s,
+            birth_date = %s,
+            identity_number = %s,
+            place_of_birth = %s,
+            country_of_birth = %s,
+            address_county = %s,
+            address_city = %s,
+            address_street = %s,
+            address_house_number = %s,
+            address_block_number = %s,
+            address_entrance = %s,
+            address_apartment = %s,
+            employer_name = %s,
+            document_type = %s,
+            document_id = %s,
+            document_issuer = %s,
+            document_date_of_expire = %s,
+            document_date_of_issue = %s,
+            leanpay_monthly_repayment = %s,
+            available_monthly_credit_limit = %s,
+            available_exposure = %s,
+            limit_exposure_last_update = NOW(),
+            data_validated = %s,
+            marketing_consent = %s,
+            marketing_consent_last_modified = NOW(),
+            kyc_motion_consent_given = %s,
+            risk_score = %s,
+            risk_level = %s,
+            risk_override = %s,
+            pep_flag = %s,
+            sanctions_hit = %s,
+            geography_risk = %s,
+            product_risk = %s,
+            behavior_risk = %s
+        WHERE id = %s
+        RETURNING *
+    """
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            query,
+            (
+                payload.member_id,
+                payload.first_name,
+                payload.last_name,
+                full_name,
+                payload.phone_number,
+                payload.status,
+                payload.email,
+                payload.birth_date,
+                payload.identity_number,
+                payload.place_of_birth,
+                payload.country_of_birth,
+                payload.address_county,
+                payload.address_city,
+                payload.address_street,
+                payload.address_house_number,
+                payload.address_block_number,
+                payload.address_entrance,
+                payload.address_apartment,
+                payload.employer_name,
+                payload.document_type,
+                payload.document_id,
+                payload.document_issuer,
+                payload.document_date_of_expire,
+                payload.document_date_of_issue,
+                payload.leanpay_monthly_repayment,
+                payload.available_monthly_credit_limit,
+                payload.available_exposure,
+                payload.data_validated,
+                payload.marketing_consent,
+                payload.kyc_motion_consent_given,
+                score,
+                level,
+                payload.risk_override,
+                payload.indicators.pep_flag,
+                payload.indicators.sanctions_hit,
+                payload.indicators.geography_risk,
+                payload.indicators.product_risk,
+                payload.indicators.behavior_risk,
+                customer_id,
+            ),
+        )
+        row = await cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Customer not found")
+
+    await log_assessment(conn, customer_id, score, level, reasons)
+    await publish_event("aml.customer.updated", {"customer_id": str(customer_id), "risk_level": level})
     return Customer(**row)
 
 
@@ -158,63 +368,108 @@ async def ingest_transaction(
     payload: TransactionCreate, conn: AsyncConnection = Depends(connection)
 ) -> dict:
     async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute("SELECT id, country, risk_level FROM customers WHERE id = %s", (payload.customer_id,))
-        customer = await cur.fetchone()
-        if not customer:
-            raise HTTPException(status_code=404, detail="Customer not found")
-
         query = """
-            INSERT INTO transactions (customer_id, amount, currency, channel, country, merchant_category, occurred_at, metadata)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, occurred_at
+            INSERT INTO transactions (
+                surrogate_id, person_first_name, person_last_name, vendor_name,
+                price_number_of_months, grace_number_of_months,
+                original_transaction_amount, amount, vendor_transaction_id,
+                client_settlement_status, vendor_settlement_status,
+                transaction_delivery_status, partial_delivery,
+                transaction_last_activity, transaction_financial_status, customer_id
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, created_at
         """
         await cur.execute(
             query,
             (
-                payload.customer_id,
+                payload.surrogate_id,
+                payload.person_first_name,
+                payload.person_last_name,
+                payload.vendor_name,
+                payload.price_number_of_months,
+                payload.grace_number_of_months,
+                payload.original_transaction_amount,
                 payload.amount,
-                payload.currency,
-                payload.channel,
-                payload.country,
-                payload.merchant_category,
-                payload.occurred_at or datetime.utcnow(),
-                payload.metadata,
+                payload.vendor_transaction_id,
+                payload.client_settlement_status,
+                payload.vendor_settlement_status,
+                payload.transaction_delivery_status,
+                payload.partial_delivery,
+                payload.transaction_last_activity,
+                payload.transaction_financial_status,
+                payload.customer_id,
             ),
         )
         tx = await cur.fetchone()
 
     await publish_event(
         "aml.transaction.ingested",
-        {"transaction_id": tx["id"], "customer_id": str(payload.customer_id), "amount": payload.amount},
+        {"transaction_id": tx["id"], "surrogate_id": payload.surrogate_id, "amount": payload.amount},
     )
-    return {"id": tx["id"], "occurred_at": tx["occurred_at"]}
+    return {"id": tx["id"], "created_at": tx["created_at"]}
 
 
 @app.get("/transactions")
 async def list_transactions(
     customer_id: Optional[UUID] = Query(None),
+    financial_status: Optional[str] = Query(None),
+    settlement_status: Optional[str] = Query(None),
     limit: int = Query(100, le=500),
     conn: AsyncConnection = Depends(connection),
-) -> List[dict]:
+):
     clauses = []
     params: list = []
     if customer_id:
-        clauses.append("customer_id = %s")
+        clauses.append("t.customer_id = %s")
         params.append(customer_id)
+    if financial_status:
+        clauses.append("t.transaction_financial_status = %s")
+        params.append(financial_status)
+    if settlement_status:
+        clauses.append("(t.client_settlement_status = %s OR t.vendor_settlement_status = %s)")
+        params.extend([settlement_status, settlement_status])
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     query = f"""
-        SELECT t.*, c.full_name, c.risk_level
+        SELECT t.*, c.full_name as customer_name, c.risk_level
         FROM transactions t
-        JOIN customers c ON c.id = t.customer_id
+        LEFT JOIN customers c ON c.id = t.customer_id
         {where}
-        ORDER BY occurred_at DESC
+        ORDER BY t.created_at DESC
         LIMIT %s
     """
     params.append(limit)
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(query, params)
         rows = await cur.fetchall()
-    return rows
+
+    # Convert rows to JSON-serializable format
+    serialized_rows = []
+    for row in rows:
+        data = dict(row)
+        # Convert UUID to string
+        if "customer_id" in data and data["customer_id"]:
+            data["customer_id"] = str(data["customer_id"])
+        if "id" in data and data["id"]:
+            data["id"] = int(data["id"])
+        # Convert Decimal to float
+        if "amount" in data and data["amount"]:
+            data["amount"] = float(data["amount"])
+        if "original_transaction_amount" in data and data["original_transaction_amount"]:
+            data["original_transaction_amount"] = float(data["original_transaction_amount"])
+        # Convert datetime to ISO string
+        if "created_at" in data and data["created_at"]:
+            data["created_at"] = data["created_at"].isoformat()
+        serialized_rows.append(data)
+
+    return JSONResponse(
+        content=serialized_rows,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.get("/alert-definitions", response_model=List[AlertDefinition])
@@ -310,11 +565,11 @@ async def delete_alert_definition(
         await cur.execute("DELETE FROM alert_definitions WHERE id = %s", (definition_id,))
 
 
-@app.get("/alerts", response_model=List[Alert])
+@app.get("/alerts")
 async def list_alerts(
     status_filter: Optional[str] = Query(None, alias="status"),
     conn: AsyncConnection = Depends(connection),
-) -> List[Alert]:
+):
     query = "SELECT * FROM alerts"
     params: list = []
     if status_filter:
@@ -325,7 +580,15 @@ async def list_alerts(
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(query, params)
         rows = await cur.fetchall()
-    return [Alert(**row) for row in rows]
+
+    return JSONResponse(
+        content=[Alert(**row).model_dump(mode='json') for row in rows],
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @app.patch("/alerts/{alert_id}", response_model=Alert)
@@ -356,15 +619,15 @@ async def update_alert(
 
 @app.post("/kyc/run")
 async def run_kyc_checks(
-    days_before_expiry: int = 30, conn: AsyncConnection = Depends(connection)
+    days_before_expiry: int = 365, conn: AsyncConnection = Depends(connection)
 ) -> dict:
     upcoming = date.today() + timedelta(days=days_before_expiry)
     query = """
         INSERT INTO kyc_tasks (customer_id, due_date, reason)
-        SELECT id, id_document_expiry, 'Document expiry approaching'
+        SELECT id, document_date_of_expire, 'Document expiry approaching'
         FROM customers
-        WHERE id_document_expiry IS NOT NULL
-          AND id_document_expiry <= %s
+        WHERE document_date_of_expire IS NOT NULL
+          AND document_date_of_expire <= %s
         ON CONFLICT DO NOTHING
         RETURNING id, customer_id
     """
@@ -389,7 +652,9 @@ async def list_kyc_tasks(conn: AsyncConnection = Depends(connection)) -> List[di
 async def high_risk_report(conn: AsyncConnection = Depends(connection)) -> List[dict]:
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(
-            "SELECT id, full_name, email, risk_score, risk_level, country FROM customers WHERE risk_level = 'high'"
+            """SELECT id, member_id, first_name, last_name, full_name, email,
+                      risk_score, risk_level, country_of_birth, status, data_validated
+               FROM customers WHERE risk_level = 'high'"""
         )
         return await cur.fetchall()
 
@@ -427,6 +692,134 @@ async def log_assessment(
             """,
             (customer_id, score, score, level, "; ".join(reasons)),
         )
+
+
+# ========================================
+# Temporal Workflow Endpoints
+# ========================================
+
+@app.get("/workflows")
+async def list_workflows() -> List[dict]:
+    """List all workflow executions"""
+    if not temporal_client:
+        raise HTTPException(status_code=503, detail="Temporal client not connected")
+
+    try:
+        workflows = []
+        async for workflow in temporal_client.list_workflows():
+            workflows.append({
+                "workflow_id": workflow.id,
+                "run_id": workflow.run_id,
+                "workflow_type": workflow.workflow_type,
+                "status": workflow.status.name,
+                "start_time": workflow.start_time.isoformat() if workflow.start_time else None,
+                "close_time": workflow.close_time.isoformat() if workflow.close_time else None,
+                "execution_time": workflow.execution_time.isoformat() if workflow.execution_time else None,
+            })
+
+        return workflows
+    except Exception as e:
+        logging.error(f"Error listing workflows: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/workflows/kyc-refresh/start")
+async def start_kyc_workflow(customer_id: UUID, days_before: int = 365) -> dict:
+    """Start a KYC refresh workflow for a customer"""
+    if not temporal_client:
+        raise HTTPException(status_code=503, detail="Temporal client not connected")
+
+    try:
+        from src.workflows.worker import KycRefreshWorkflow
+
+        handle = await temporal_client.start_workflow(
+            KycRefreshWorkflow.run,
+            args=[str(customer_id), days_before],
+            id=f"kyc-refresh-{customer_id}-{datetime.utcnow().timestamp()}",
+            task_queue="aml-tasks",
+        )
+
+        return {
+            "workflow_id": handle.id,
+            "run_id": handle.result_run_id,
+            "workflow_type": "KycRefreshWorkflow",
+            "status": "RUNNING"
+        }
+    except Exception as e:
+        logging.error(f"Error starting KYC workflow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/workflows/sanctions-screening/start")
+async def start_sanctions_workflow(customer_id: UUID, hit_detected: bool = False) -> dict:
+    """Start a sanctions screening workflow for a customer"""
+    if not temporal_client:
+        raise HTTPException(status_code=503, detail="Temporal client not connected")
+
+    try:
+        from src.workflows.worker import SanctionsScreeningWorkflow
+
+        handle = await temporal_client.start_workflow(
+            SanctionsScreeningWorkflow.run,
+            args=[str(customer_id), hit_detected],
+            id=f"sanctions-screening-{customer_id}-{datetime.utcnow().timestamp()}",
+            task_queue="aml-tasks",
+        )
+
+        return {
+            "workflow_id": handle.id,
+            "run_id": handle.result_run_id,
+            "workflow_type": "SanctionsScreeningWorkflow",
+            "status": "RUNNING"
+        }
+    except Exception as e:
+        logging.error(f"Error starting sanctions workflow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/workflows/{workflow_id}/{run_id}")
+async def get_workflow_details(workflow_id: str, run_id: str) -> dict:
+    """Get details about a specific workflow execution"""
+    if not temporal_client:
+        raise HTTPException(status_code=503, detail="Temporal client not connected")
+
+    try:
+        handle = temporal_client.get_workflow_handle(workflow_id, run_id=run_id)
+        desc = await handle.describe()
+
+        return {
+            "workflow_id": desc.id,
+            "run_id": desc.run_id,
+            "workflow_type": desc.workflow_type,
+            "status": desc.status.name,
+            "start_time": desc.start_time.isoformat() if desc.start_time else None,
+            "close_time": desc.close_time.isoformat() if desc.close_time else None,
+            "execution_time": desc.execution_time.isoformat() if desc.execution_time else None,
+            "task_queue": desc.task_queue,
+        }
+    except Exception as e:
+        logging.error(f"Error getting workflow details: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/workflows/{workflow_id}/{run_id}/cancel")
+async def cancel_workflow(workflow_id: str, run_id: str) -> dict:
+    """Cancel a running workflow"""
+    if not temporal_client:
+        raise HTTPException(status_code=503, detail="Temporal client not connected")
+
+    try:
+        handle = temporal_client.get_workflow_handle(workflow_id, run_id=run_id)
+        await handle.cancel()
+
+        return {
+            "workflow_id": workflow_id,
+            "run_id": run_id,
+            "status": "CANCELLED"
+        }
+    except Exception as e:
+        logging.error(f"Error canceling workflow: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":

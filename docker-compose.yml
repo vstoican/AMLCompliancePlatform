@@ -49,11 +49,13 @@ services:
     restart: unless-stopped
 
   frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
+    image: python:3.12-slim
+    working_dir: /app
+    command: python server.py
+    volumes:
+      - ./frontend:/app
     ports:
-      - "4173:80"
+      - "4173:8080"
     depends_on:
       - api
     restart: unless-stopped

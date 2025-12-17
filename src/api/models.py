@@ -6,46 +6,165 @@ from pydantic import BaseModel, Field
 
 
 class RiskIndicators(BaseModel):
-    geography_risk: float = Field(0, ge=0, le=10)
-    product_risk: float = Field(0, ge=0, le=10)
-    behavior_risk: float = Field(0, ge=0, le=10)
+    geography_risk: float = Field(1, ge=1, le=10)
+    product_risk: float = Field(1, ge=1, le=10)
+    behavior_risk: float = Field(1, ge=1, le=10)
     adverse_media: bool = False
     pep_flag: bool = False
     sanctions_hit: bool = False
 
 
 class CustomerCreate(BaseModel):
-    full_name: str
+    # Basic Info
+    member_id: Optional[str] = None
+    first_name: str
+    last_name: str
+    phone_number: Optional[str] = None
+    status: str = "PENDING"
     email: Optional[str] = None
-    country: Optional[str] = None
-    id_document_expiry: Optional[date] = None
+
+    # Personal Details
+    birth_date: Optional[date] = None
+    identity_number: Optional[str] = None
+    place_of_birth: Optional[str] = None
+    country_of_birth: Optional[str] = None
+
+    # Address
+    address_county: Optional[str] = None
+    address_city: Optional[str] = None
+    address_street: Optional[str] = None
+    address_house_number: Optional[str] = None
+    address_block_number: Optional[str] = None
+    address_entrance: Optional[str] = None
+    address_apartment: Optional[str] = None
+
+    # Employment
+    employer_name: Optional[str] = None
+
+    # Document Info
+    document_type: Optional[str] = None
+    document_id: Optional[str] = None
+    document_issuer: Optional[str] = None
+    document_date_of_expire: Optional[date] = None
+    document_date_of_issue: Optional[date] = None
+
+    # Financial/Credit Limits
+    leanpay_monthly_repayment: float = 0
+    available_monthly_credit_limit: float = 0
+    available_exposure: float = 0
+
+    # Validation & Consent
+    data_validated: str = "NOT VALIDATED"
+    marketing_consent: str = "NOT SET"
+    kyc_motion_consent_given: bool = False
+
+    # Risk Indicators
     indicators: RiskIndicators = Field(default_factory=RiskIndicators)
     risk_override: Optional[str] = None
 
 
 class Customer(BaseModel):
     id: UUID
-    full_name: str
+
+    # Basic Info
+    member_id: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    full_name: Optional[str] = None  # Legacy field, computed
+    phone_number: Optional[str] = None
+    status: str = "PENDING"
+    application_time: Optional[datetime] = None
     email: Optional[str] = None
-    country: Optional[str] = None
-    risk_score: float
-    risk_level: str
+
+    # Personal Details
+    birth_date: Optional[date] = None
+    identity_number: Optional[str] = None
+    place_of_birth: Optional[str] = None
+    country_of_birth: Optional[str] = None
+
+    # Address
+    address_county: Optional[str] = None
+    address_city: Optional[str] = None
+    address_street: Optional[str] = None
+    address_house_number: Optional[str] = None
+    address_block_number: Optional[str] = None
+    address_entrance: Optional[str] = None
+    address_apartment: Optional[str] = None
+
+    # Employment
+    employer_name: Optional[str] = None
+
+    # Document Info
+    document_type: Optional[str] = None
+    document_id: Optional[str] = None
+    document_issuer: Optional[str] = None
+    document_date_of_expire: Optional[date] = None
+    document_date_of_issue: Optional[date] = None
+
+    # Financial/Credit Limits
+    leanpay_monthly_repayment: float = 0
+    available_monthly_credit_limit: float = 0
+    available_exposure: float = 0
+    limit_exposure_last_update: Optional[datetime] = None
+
+    # Validation & Consent
+    data_validated: str = "NOT VALIDATED"
+    marketing_consent: str = "NOT SET"
+    marketing_consent_last_modified: Optional[datetime] = None
+    kyc_motion_consent_given: bool = False
+    kyc_motion_consent_date: Optional[datetime] = None
+
+    # Risk Management
+    risk_score: float = 0
+    risk_level: str = "low"
     risk_override: Optional[str] = None
-    id_document_expiry: Optional[date] = None
-    pep_flag: bool
-    sanctions_hit: bool
+    pep_flag: bool = False
+    sanctions_hit: bool = False
+    geography_risk: float = 1
+    product_risk: float = 1
+    behavior_risk: float = 1
+
     created_at: datetime
 
 
 class TransactionCreate(BaseModel):
-    customer_id: UUID
+    surrogate_id: str
+    person_first_name: str
+    person_last_name: str
+    vendor_name: Optional[str] = None
+    price_number_of_months: int = 1
+    grace_number_of_months: int = 0
+    original_transaction_amount: float
     amount: float
-    currency: str = "EUR"
-    channel: Optional[str] = None
-    country: Optional[str] = None
-    merchant_category: Optional[str] = None
-    occurred_at: Optional[datetime] = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    vendor_transaction_id: Optional[str] = None
+    client_settlement_status: str = "unpaid"
+    vendor_settlement_status: str = "unpaid"
+    transaction_delivery_status: str = "PENDING"
+    partial_delivery: bool = False
+    transaction_last_activity: str = "REGULAR"
+    transaction_financial_status: str = "PENDING"
+    customer_id: Optional[UUID] = None
+
+
+class Transaction(BaseModel):
+    id: int
+    surrogate_id: str
+    person_first_name: str
+    person_last_name: str
+    vendor_name: Optional[str] = None
+    price_number_of_months: int = 1
+    grace_number_of_months: int = 0
+    original_transaction_amount: float
+    amount: float
+    created_at: datetime
+    vendor_transaction_id: Optional[str] = None
+    client_settlement_status: str = "unpaid"
+    vendor_settlement_status: str = "unpaid"
+    transaction_delivery_status: str = "PENDING"
+    partial_delivery: bool = False
+    transaction_last_activity: str = "REGULAR"
+    transaction_financial_status: str = "PENDING"
+    customer_id: Optional[UUID] = None
 
 
 class Alert(BaseModel):

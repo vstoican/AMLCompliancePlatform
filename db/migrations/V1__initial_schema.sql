@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS risk_assessments (
 );
 
 CREATE TABLE IF NOT EXISTS transactions (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGSERIAL,
     customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
     amount NUMERIC(16,2) NOT NULL,
     currency TEXT NOT NULL DEFAULT 'EUR',
@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     country TEXT,
     merchant_category TEXT,
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    metadata JSONB DEFAULT '{}'::jsonb
+    metadata JSONB DEFAULT '{}'::jsonb,
+    PRIMARY KEY (id, occurred_at)
 );
 SELECT create_hypertable('transactions', 'occurred_at', if_not_exists => TRUE);
 

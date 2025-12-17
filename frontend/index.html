@@ -8,6 +8,9 @@
   <link rel="icon" href="data:," />
 </head>
 <body>
+  <!-- Toast Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
   <div class="app-shell">
     <aside class="sidebar">
       <div class="brand">
@@ -18,45 +21,62 @@
         </div>
       </div>
       <nav class="nav accordion">
+        <!-- Dashboard - Always visible at top -->
+        <button class="nav-item active" data-target="overview" style="margin-bottom: 8px; font-weight: 600;">
+          <span style="margin-right: 8px;">📊</span> Dashboard
+        </button>
+
         <div class="accordion-item open">
-          <button class="accordion-trigger">Operations</button>
+          <button class="accordion-trigger">Case Management</button>
           <div class="accordion-panel">
             <button class="nav-item" data-target="customers">Customers</button>
-            <button class="nav-item" data-target="kyc">KYC</button>
-            <button class="nav-item" data-target="reports">Reports</button>
-          </div>
-        </div>
-        <div class="accordion-item open">
-          <button class="accordion-trigger">Monitoring</button>
-          <div class="accordion-panel">
-            <button class="nav-item active" data-target="overview">Overview</button>
             <button class="nav-item" data-target="transactions">Transactions</button>
-            <button class="nav-item nav-parent" data-target="alerts">Alerts</button>
-            <button class="nav-item nav-sub" data-target="alert-definitions">Alert definitions</button>
-            <button class="nav-item nav-sub" data-target="alert-stream">Alert stream</button>
+            <button class="nav-item" data-target="alerts">Alerts</button>
+            <button class="nav-item" data-target="alert-stream">Alert Stream</button>
           </div>
         </div>
+
+        <div class="accordion-item">
+          <button class="accordion-trigger">Rules & Automation</button>
+          <div class="accordion-panel">
+            <button class="nav-item" data-target="alert-definitions">Alert Definitions</button>
+            <button class="nav-item" data-target="workflow-definitions">Workflows</button>
+            <button class="nav-item" data-target="workflow-executions">Workflow History</button>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-trigger">Analytics</button>
+          <div class="accordion-panel">
+            <button class="nav-item" data-target="risk-analysis">Risk Analysis</button>
+            <button class="nav-item" data-target="country-distribution">Country Distribution</button>
+            <button class="nav-item" data-target="transactions-alerts">Transaction Trends</button>
+            <button class="nav-item" data-target="reports">Compliance Reports</button>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-trigger">Administration</button>
+          <div class="accordion-panel">
+            <button class="nav-item" data-target="users">Users</button>
+            <button class="nav-item" data-target="roles">Roles & Permissions</button>
+            <button class="nav-item" data-target="audit-log">Audit Log</button>
+          </div>
+        </div>
+
       </nav>
+      <div class="nav-footer">
+        <button class="btn ghost" id="settingsBtn" style="flex: 1; display: flex; align-items: center; gap: 8px; justify-content: flex-start;">
+          <span style="font-size: 18px;">⚙️</span>
+          <span>Settings</span>
+        </button>
+        <button id="themeToggle" class="btn ghost" aria-label="Switch theme" style="padding: 10px;">
+          <span id="themeIcon" class="icon"></span>
+        </button>
+      </div>
     </aside>
 
     <main class="main">
-      <header class="topbar">
-        <div class="search">
-          <input id="searchInput" type="search" placeholder="Search customers, alerts, transactions..." />
-        </div>
-        <div class="actions">
-          <button id="themeToggle" class="btn ghost" aria-label="Switch theme">
-            <span id="themeIcon" class="icon"></span>
-          </button>
-          <select id="riskFilter">
-            <option value="">Risk: All</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-          </select>
-          <button id="refreshBtn" class="btn ghost">Refresh</button>
-        </div>
-      </header>
 
       <section id="overview" class="panel active">
         <div class="grid stats">
@@ -69,11 +89,6 @@
             <p class="label">High-Risk Customers</p>
             <p id="statHighRisk" class="metric">-</p>
             <span class="badge amber">Risk</span>
-          </div>
-          <div class="card">
-            <p class="label">Upcoming KYC</p>
-            <p id="statKyc" class="metric">-</p>
-            <span class="badge teal">Expiry</span>
           </div>
           <div class="card">
             <p class="label">Past 24h Volume</p>
@@ -107,6 +122,29 @@
           </div>
           <button id="createCustomerBtn" class="btn primary">New Customer</button>
         </div>
+        <!-- Contextual Search & Filters -->
+        <div class="panel-filters" style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center;">
+          <input id="customerSearch" type="search" placeholder="Search by name, member ID, phone, email..." style="flex: 1; min-width: 200px;" />
+          <select id="customerStatusFilter">
+            <option value="">All Statuses</option>
+            <option value="PENDING">Pending</option>
+            <option value="ACTIVE">Active</option>
+            <option value="SUSPENDED">Suspended</option>
+            <option value="CLOSED">Closed</option>
+          </select>
+          <select id="customerRiskFilter">
+            <option value="">All Risk Levels</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+          <select id="customerValidationFilter">
+            <option value="">All Validation</option>
+            <option value="VALIDATED">Validated</option>
+            <option value="NOT VALIDATED">Not Validated</option>
+            <option value="PENDING">Pending</option>
+          </select>
+        </div>
         <div id="customerTable" class="table"></div>
       </section>
 
@@ -114,9 +152,55 @@
         <div class="panel-head">
           <div>
             <h2>Transactions</h2>
-            <p class="muted">Transactions feed</p>
+            <p class="muted">Real-time transactions with settlement tracking</p>
           </div>
         </div>
+
+        <!-- Transaction Stats -->
+        <div class="grid stats" style="margin-bottom: 20px;">
+          <div class="card">
+            <p class="label">Total Transactions</p>
+            <p id="txnTotalCount" class="metric">-</p>
+            <span class="badge purple">All Time</span>
+          </div>
+          <div class="card">
+            <p class="label">Pending Financial</p>
+            <p id="txnPendingFinancial" class="metric">-</p>
+            <span class="badge amber">Awaiting</span>
+          </div>
+          <div class="card">
+            <p class="label">Unpaid (Client)</p>
+            <p id="txnUnpaidClient" class="metric">-</p>
+            <span class="badge amber">Settlement</span>
+          </div>
+          <div class="card">
+            <p class="label">Total Volume</p>
+            <p id="txnTotalVolume" class="metric">-</p>
+            <span class="badge teal">EUR</span>
+          </div>
+        </div>
+
+        <!-- Contextual Search & Filters -->
+        <div class="panel-filters" style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center;">
+          <input id="transactionSearch" type="search" placeholder="Search by ID, person name, vendor..." style="flex: 1; min-width: 200px;" />
+          <select id="transactionFinancialFilter">
+            <option value="">All Financial Status</option>
+            <option value="PENDING">Pending</option>
+            <option value="COMPLETED">Completed</option>
+            <option value="FAILED">Failed</option>
+          </select>
+          <select id="transactionSettlementFilter">
+            <option value="">All Settlements</option>
+            <option value="paid">Paid</option>
+            <option value="unpaid">Unpaid</option>
+          </select>
+          <select id="transactionDeliveryFilter">
+            <option value="">All Delivery</option>
+            <option value="PENDING">Pending</option>
+            <option value="DELIVERED">Delivered</option>
+          </select>
+        </div>
+
         <div id="transactionTable" class="table"></div>
       </section>
 
@@ -126,28 +210,32 @@
             <h2>Alerts</h2>
             <p class="muted">Library-backed, near real-time triggers on the hypertable</p>
           </div>
+        </div>
+        <!-- Contextual Search & Filters -->
+        <div class="panel-filters" style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center;">
+          <input id="alertSearch" type="search" placeholder="Search by scenario, type, customer..." style="flex: 1; min-width: 200px;" />
           <select id="alertStatusFilter">
-            <option value="">All</option>
+            <option value="">All Statuses</option>
             <option value="open">Open</option>
-            <option value="in_progress">In progress</option>
+            <option value="in_progress">In Progress</option>
             <option value="closed">Closed</option>
           </select>
+          <select id="alertSeverityFilter">
+            <option value="">All Severities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <select id="alertTypeFilter">
+            <option value="">All Types</option>
+            <option value="transaction_monitoring">Transaction Monitoring</option>
+            <option value="kyc">KYC</option>
+            <option value="sanctions">Sanctions</option>
+          </select>
         </div>
-        <div class="grid two alerts-layout">
-          <div class="card">
-            <div class="card-head">
-              <h3>Alert definitions</h3>
-              <span class="muted small">Toggle to enable/disable rules</span>
-            </div>
-            <div id="alertDefinitions" class="list dense"></div>
-          </div>
-          <div class="card">
-            <div class="card-head">
-              <h3>Alert stream</h3>
-              <span class="muted small">Latest 100 alerts (DB trigger)</span>
-            </div>
-            <div id="alertTable" class="table compact"></div>
-          </div>
+        <div class="card">
+          <div id="alertTable" class="table compact"></div>
         </div>
       </section>
 
@@ -180,22 +268,241 @@
         <div id="alertTable2" class="table"></div>
       </section>
 
-      <section id="kyc" class="panel">
+      <section id="workflow-definitions" class="panel">
         <div class="panel-head">
           <div>
-            <h2>KYC</h2>
-            <p class="muted">Expiry monitoring and notifications</p>
+            <h2>Workflow Definitions</h2>
+            <p class="muted">Automated compliance workflows powered by Temporal</p>
           </div>
-          <button id="runKycBtn" class="btn outline">Run check</button>
+          <a href="http://localhost:8080" target="_blank" class="btn ghost">
+            Open Temporal UI
+          </a>
         </div>
-        <div id="kycTable" class="table"></div>
+
+        <!-- Workflow Stats Summary -->
+        <div class="grid stats" style="margin-bottom: 20px;">
+          <div class="card">
+            <p class="label">Available Workflows</p>
+            <p class="metric">2</p>
+            <span class="badge teal">Active</span>
+          </div>
+          <div class="card">
+            <p class="label">Total Executions</p>
+            <p id="wfTotalExecutions" class="metric">-</p>
+            <span class="badge purple">All time</span>
+          </div>
+          <div class="card">
+            <p class="label">Success Rate</p>
+            <p id="wfSuccessRate" class="metric">-</p>
+            <span class="badge teal">Completed</span>
+          </div>
+          <div class="card">
+            <p class="label">Currently Running</p>
+            <p id="wfRunningCount" class="metric">-</p>
+            <span class="badge amber">In progress</span>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <!-- KYC Expiration Check Workflow -->
+          <div class="card workflow-card">
+            <div style="display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px;">
+              <div style="width: 56px; height: 56px; border-radius: 12px; background: linear-gradient(135deg, rgba(91,224,179,0.2), rgba(91,224,179,0.05)); display: flex; align-items: center; justify-content: center; font-size: 28px; flex-shrink: 0;">
+                📋
+              </div>
+              <div style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
+                  <h3 style="margin: 0; font-size: 18px;">KYC Expiration Check</h3>
+                  <span class="badge teal" style="font-size: 10px;">ACTIVE</span>
+                </div>
+                <p class="muted" style="margin: 0; font-size: 13px; line-height: 1.5;">
+                  Automatically monitors customer document expiration and creates KYC renewal tasks before documents expire.
+                </p>
+              </div>
+            </div>
+
+            <div style="background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 16px;">
+              <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; text-align: center;">
+                <div>
+                  <div style="font-size: 20px; font-weight: 700; color: var(--text);" id="kycWfCompleted">-</div>
+                  <div style="font-size: 11px; color: var(--muted); text-transform: uppercase;">Completed</div>
+                </div>
+                <div>
+                  <div style="font-size: 20px; font-weight: 700; color: var(--amber);" id="kycWfRunning">-</div>
+                  <div style="font-size: 11px; color: var(--muted); text-transform: uppercase;">Running</div>
+                </div>
+                <div>
+                  <div style="font-size: 20px; font-weight: 700; color: var(--primary);">365d</div>
+                  <div style="font-size: 11px; color: var(--muted); text-transform: uppercase;">Check Window</div>
+                </div>
+              </div>
+            </div>
+
+            <div style="display: grid; gap: 8px; font-size: 13px; margin-bottom: 16px;">
+              <div style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(255,255,255,0.02); border-radius: 6px;">
+                <span style="color: var(--primary);">•</span>
+                <span>Checks documents expiring within <strong>1 year</strong></span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(255,255,255,0.02); border-radius: 6px;">
+                <span style="color: var(--primary);">•</span>
+                <span>Creates KYC task for compliance team review</span>
+              </div>
+            </div>
+
+            <button class="btn primary" onclick="openWorkflowModal('kyc-refresh')" style="width: 100%;">
+              Run KYC Check
+            </button>
+          </div>
+
+          <!-- Sanctions Screening Workflow -->
+          <div class="card workflow-card">
+            <div style="display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px;">
+              <div style="width: 56px; height: 56px; border-radius: 12px; background: linear-gradient(135deg, rgba(239,68,68,0.2), rgba(239,68,68,0.05)); display: flex; align-items: center; justify-content: center; font-size: 28px; flex-shrink: 0;">
+                🛡️
+              </div>
+              <div style="flex: 1;">
+                <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 4px;">
+                  <h3 style="margin: 0; font-size: 18px;">Sanctions Screening</h3>
+                  <span class="badge teal" style="font-size: 10px;">ACTIVE</span>
+                </div>
+                <p class="muted" style="margin: 0; font-size: 13px; line-height: 1.5;">
+                  Screens customers against sanctions lists and creates high-priority alerts when matches are detected.
+                </p>
+              </div>
+            </div>
+
+            <div style="background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 16px;">
+              <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; text-align: center;">
+                <div>
+                  <div style="font-size: 20px; font-weight: 700; color: var(--text);" id="sanctionsWfCompleted">-</div>
+                  <div style="font-size: 11px; color: var(--muted); text-transform: uppercase;">Completed</div>
+                </div>
+                <div>
+                  <div style="font-size: 20px; font-weight: 700; color: var(--amber);" id="sanctionsWfRunning">-</div>
+                  <div style="font-size: 11px; color: var(--muted); text-transform: uppercase;">Running</div>
+                </div>
+                <div>
+                  <div style="font-size: 20px; font-weight: 700; color: var(--red);" id="sanctionsWfAlerts">-</div>
+                  <div style="font-size: 11px; color: var(--muted); text-transform: uppercase;">Alerts Created</div>
+                </div>
+              </div>
+            </div>
+
+            <div style="display: grid; gap: 8px; font-size: 13px; margin-bottom: 16px;">
+              <div style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(255,255,255,0.02); border-radius: 6px;">
+                <span style="color: var(--red);">•</span>
+                <span>Checks against global sanctions databases</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: rgba(255,255,255,0.02); border-radius: 6px;">
+                <span style="color: var(--red);">•</span>
+                <span>Creates <strong>high severity</strong> alert on match</span>
+              </div>
+            </div>
+
+            <button class="btn primary" onclick="openWorkflowModal('sanctions-screening')" style="width: 100%;">
+              Run Sanctions Check
+            </button>
+          </div>
+        </div>
+
+        <!-- How it works -->
+        <div class="card" style="margin-top: 20px;">
+          <h3 style="margin: 0 0 16px 0; font-size: 16px;">How Temporal Workflows Work</h3>
+          <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+            <div style="text-align: center;">
+              <div style="width: 48px; height: 48px; margin: 0 auto 12px; border-radius: 50%; background: rgba(91,224,179,0.1); display: flex; align-items: center; justify-content: center; font-size: 20px;">1</div>
+              <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Trigger</div>
+              <div style="font-size: 12px; color: var(--muted);">Start workflow manually or via automation</div>
+            </div>
+            <div style="text-align: center;">
+              <div style="width: 48px; height: 48px; margin: 0 auto 12px; border-radius: 50%; background: rgba(91,224,179,0.1); display: flex; align-items: center; justify-content: center; font-size: 20px;">2</div>
+              <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Execute</div>
+              <div style="font-size: 12px; color: var(--muted);">Workflow runs activities in sequence</div>
+            </div>
+            <div style="text-align: center;">
+              <div style="width: 48px; height: 48px; margin: 0 auto 12px; border-radius: 50%; background: rgba(91,224,179,0.1); display: flex; align-items: center; justify-content: center; font-size: 20px;">3</div>
+              <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Recover</div>
+              <div style="font-size: 12px; color: var(--muted);">Auto-retry on failure with backoff</div>
+            </div>
+            <div style="text-align: center;">
+              <div style="width: 48px; height: 48px; margin: 0 auto 12px; border-radius: 50%; background: rgba(91,224,179,0.1); display: flex; align-items: center; justify-content: center; font-size: 20px;">4</div>
+              <div style="font-size: 13px; font-weight: 600; margin-bottom: 4px;">Complete</div>
+              <div style="font-size: 12px; color: var(--muted);">Results stored for audit trail</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="workflow-executions" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Workflow History</h2>
+            <p class="muted">Monitor running and completed workflow instances</p>
+          </div>
+          <div class="inline">
+            <select id="workflowStatusFilter">
+              <option value="">All Statuses</option>
+              <option value="RUNNING">Running</option>
+              <option value="COMPLETED">Completed</option>
+              <option value="FAILED">Failed</option>
+              <option value="CANCELED">Canceled</option>
+            </select>
+            <select id="workflowTypeFilter">
+              <option value="">All Types</option>
+              <option value="KycRefreshWorkflow">KYC Expiration Check</option>
+              <option value="SanctionsScreeningWorkflow">Sanctions Screening</option>
+            </select>
+            <button id="refreshWorkflowsBtn" class="btn primary">Refresh</button>
+          </div>
+        </div>
+
+        <!-- Execution Stats -->
+        <div class="grid stats" style="margin-bottom: 20px;">
+          <div class="card">
+            <p class="label">Completed</p>
+            <p id="execCompleted" class="metric" style="color: var(--primary);">-</p>
+            <span class="badge teal">Success</span>
+          </div>
+          <div class="card">
+            <p class="label">Running</p>
+            <p id="execRunning" class="metric" style="color: var(--amber);">-</p>
+            <span class="badge amber">In Progress</span>
+          </div>
+          <div class="card">
+            <p class="label">Failed</p>
+            <p id="execFailed" class="metric" style="color: var(--red);">-</p>
+            <span class="badge red">Error</span>
+          </div>
+          <div class="card">
+            <p class="label">Avg Duration</p>
+            <p id="execAvgDuration" class="metric">-</p>
+            <span class="badge purple">Performance</span>
+          </div>
+        </div>
+
+        <div class="card" style="padding: 0; overflow: hidden;">
+          <div id="workflowsListView" class="workflows-list">
+            <!-- Populated by JS -->
+            <div style="padding: 40px; text-align: center; color: var(--muted);">
+              Loading workflow executions...
+            </div>
+          </div>
+        </div>
+
+        <div id="workflowDetailsPanel" class="card" style="margin-top: 20px; display: none;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h3 style="margin: 0;">Execution Details</h3>
+            <button class="btn ghost" onclick="closeWorkflowDetails()" style="padding: 6px 12px;">Close</button>
+          </div>
+          <div id="workflowDetailsContent"></div>
+        </div>
       </section>
 
       <section id="reports" class="panel">
         <div class="panel-head">
           <div>
-            <h2>Reports</h2>
-            <p class="muted">High-risk roster and alert history</p>
+            <h2>Compliance Reports</h2>
+            <p class="muted">High-risk roster, alert history, and regulatory reports</p>
           </div>
           <div class="inline">
             <input id="reportFrom" type="date" />
@@ -218,26 +525,1361 @@
           </div>
         </div>
       </section>
+
+      <section id="webhooks" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Webhooks</h2>
+            <p class="muted">Configure webhook endpoints for event notifications</p>
+          </div>
+          <button class="btn primary">New Webhook</button>
+        </div>
+        <div class="card">
+          <div class="list dense">
+            <div class="row">
+              <div>
+                <div class="title">Customer Risk Events</div>
+                <div class="subtitle">https://example.com/webhooks/customer-risk</div>
+                <div class="chips">
+                  <span class="chip">aml.customer.created</span>
+                  <span class="chip">aml.customer.risk</span>
+                </div>
+              </div>
+              <div class="row-actions">
+                <span class="badge teal">Active</span>
+                <label class="switch">
+                  <input type="checkbox" checked />
+                  <span></span>
+                </label>
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <div class="title">Transaction Monitoring</div>
+                <div class="subtitle">https://example.com/webhooks/transactions</div>
+                <div class="chips">
+                  <span class="chip">aml.transaction.ingested</span>
+                </div>
+              </div>
+              <div class="row-actions">
+                <span class="badge teal">Active</span>
+                <label class="switch">
+                  <input type="checkbox" checked />
+                  <span></span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="api-keys" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>API Keys</h2>
+            <p class="muted">Manage API keys for external integrations</p>
+          </div>
+          <button class="btn primary">Generate Key</button>
+        </div>
+        <div class="card">
+          <div class="list dense">
+            <div class="row">
+              <div>
+                <div class="title">Production API Key</div>
+                <div class="subtitle">Created: 2024-11-15 · Last used: 2 hours ago</div>
+                <div class="chips">
+                  <span class="chip">read:customers</span>
+                  <span class="chip">write:transactions</span>
+                  <span class="chip">read:alerts</span>
+                </div>
+              </div>
+              <div class="row-actions">
+                <button class="btn ghost">Revoke</button>
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <div class="title">Development API Key</div>
+                <div class="subtitle">Created: 2024-10-01 · Last used: 1 day ago</div>
+                <div class="chips">
+                  <span class="chip">read:*</span>
+                </div>
+              </div>
+              <div class="row-actions">
+                <button class="btn ghost">Revoke</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="data-exports" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Data Exports</h2>
+            <p class="muted">Export compliance data and reports</p>
+          </div>
+          <button class="btn primary">New Export</button>
+        </div>
+        <div class="grid two">
+          <div class="card">
+            <div class="card-head">
+              <h3>Export Templates</h3>
+            </div>
+            <div class="list">
+              <div class="row">
+                <div>
+                  <div class="title">Customer Risk Report</div>
+                  <div class="subtitle">All customers with risk scores and flags</div>
+                </div>
+                <button class="btn outline">Export CSV</button>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="title">Alert History</div>
+                  <div class="subtitle">All alerts with resolution details</div>
+                </div>
+                <button class="btn outline">Export CSV</button>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="title">Transaction Log</div>
+                  <div class="subtitle">Full transaction history with metadata</div>
+                </div>
+                <button class="btn outline">Export CSV</button>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>Recent Exports</h3>
+            </div>
+            <div class="list">
+              <div class="row">
+                <div>
+                  <div class="title">customer-risk-2024-11-28.csv</div>
+                  <div class="subtitle">Generated: Nov 28, 2024 at 3:42 PM</div>
+                </div>
+                <button class="btn text">Download</button>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="title">alerts-q4-2024.csv</div>
+                  <div class="subtitle">Generated: Nov 22, 2024 at 10:15 AM</div>
+                </div>
+                <button class="btn text">Download</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="country-distribution" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Customer Distribution by Country</h2>
+            <p class="muted">Geographic distribution and risk analysis</p>
+          </div>
+          <div class="inline">
+            <input type="date" id="countryReportFrom" />
+            <input type="date" id="countryReportTo" />
+            <button class="btn ghost">Export CSV</button>
+          </div>
+        </div>
+        <div class="grid two">
+          <div class="card">
+            <div class="card-head">
+              <h3>Top Countries</h3>
+              <span class="muted small">Total customers: <span id="totalCustomers">-</span></span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Country</th>
+                  <th>Customers</th>
+                  <th>Percentage</th>
+                  <th>High Risk</th>
+                  <th>Avg Risk Score</th>
+                </tr>
+              </thead>
+              <tbody id="countryDistributionTable">
+                <tr>
+                  <td>🇷🇴 Romania</td>
+                  <td>245</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 100px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 45%; height: 100%; background: var(--primary);"></div>
+                      </div>
+                      <span>45%</span>
+                    </div>
+                  </td>
+                  <td><span class="badge red">12</span></td>
+                  <td>4.2</td>
+                </tr>
+                <tr>
+                  <td>🇩🇪 Germany</td>
+                  <td>158</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 100px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 29%; height: 100%; background: var(--primary);"></div>
+                      </div>
+                      <span>29%</span>
+                    </div>
+                  </td>
+                  <td><span class="badge amber">5</span></td>
+                  <td>3.1</td>
+                </tr>
+                <tr>
+                  <td>🇫🇷 France</td>
+                  <td>87</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 100px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 16%; height: 100%; background: var(--primary);"></div>
+                      </div>
+                      <span>16%</span>
+                    </div>
+                  </td>
+                  <td><span class="badge teal">2</span></td>
+                  <td>2.8</td>
+                </tr>
+                <tr>
+                  <td>🇬🇧 United Kingdom</td>
+                  <td>34</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 100px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 6%; height: 100%; background: var(--primary);"></div>
+                      </div>
+                      <span>6%</span>
+                    </div>
+                  </td>
+                  <td><span class="badge teal">1</span></td>
+                  <td>2.5</td>
+                </tr>
+                <tr>
+                  <td>🇮🇹 Italy</td>
+                  <td>21</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 100px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 4%; height: 100%; background: var(--primary);"></div>
+                      </div>
+                      <span>4%</span>
+                    </div>
+                  </td>
+                  <td><span class="badge teal">0</span></td>
+                  <td>2.3</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>Risk Distribution by Country</h3>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Country</th>
+                  <th>Low</th>
+                  <th>Medium</th>
+                  <th>High</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>🇷🇴 Romania</td>
+                  <td><span class="badge teal">180</span></td>
+                  <td><span class="badge amber">53</span></td>
+                  <td><span class="badge red">12</span></td>
+                </tr>
+                <tr>
+                  <td>🇩🇪 Germany</td>
+                  <td><span class="badge teal">125</span></td>
+                  <td><span class="badge amber">28</span></td>
+                  <td><span class="badge red">5</span></td>
+                </tr>
+                <tr>
+                  <td>🇫🇷 France</td>
+                  <td><span class="badge teal">70</span></td>
+                  <td><span class="badge amber">15</span></td>
+                  <td><span class="badge red">2</span></td>
+                </tr>
+                <tr>
+                  <td>🇬🇧 United Kingdom</td>
+                  <td><span class="badge teal">28</span></td>
+                  <td><span class="badge amber">5</span></td>
+                  <td><span class="badge red">1</span></td>
+                </tr>
+                <tr>
+                  <td>🇮🇹 Italy</td>
+                  <td><span class="badge teal">18</span></td>
+                  <td><span class="badge amber">3</span></td>
+                  <td><span class="badge red">0</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="transactions-alerts" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Transaction Trends</h2>
+            <p class="muted">Transaction volume, alert rates, and pattern analysis</p>
+          </div>
+          <div class="inline">
+            <select id="transactionsAlertsTimeframe">
+              <option value="7">Last 7 days</option>
+              <option value="30" selected>Last 30 days</option>
+              <option value="90">Last 90 days</option>
+            </select>
+            <button class="btn ghost">Export CSV</button>
+          </div>
+        </div>
+        <div class="grid stats">
+          <div class="card">
+            <p class="label">Total Transactions</p>
+            <p id="totalTransactions" class="metric">-</p>
+            <span class="badge purple">Volume</span>
+          </div>
+          <div class="card">
+            <p class="label">Total Alerts</p>
+            <p id="totalAlerts" class="metric">-</p>
+            <span class="badge red">Triggered</span>
+          </div>
+          <div class="card">
+            <p class="label">Alert Rate</p>
+            <p id="alertRate" class="metric">-</p>
+            <span class="badge amber">Percentage</span>
+          </div>
+          <div class="card">
+            <p class="label">Avg Daily Transactions</p>
+            <p id="avgDailyTransactions" class="metric">-</p>
+            <span class="badge teal">Per Day</span>
+          </div>
+        </div>
+        <div class="grid two" style="margin-top: 18px;">
+          <div class="card">
+            <div class="card-head">
+              <h3>Daily Trend</h3>
+              <span class="muted small">Last 30 days</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Transactions</th>
+                  <th>Alerts</th>
+                  <th>Alert Rate</th>
+                </tr>
+              </thead>
+              <tbody id="dailyTrendTable">
+                <tr>
+                  <td>2024-12-01</td>
+                  <td>342</td>
+                  <td>18</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 60px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 5.3%; height: 100%; background: var(--red);"></div>
+                      </div>
+                      <span>5.3%</span>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>2024-11-30</td>
+                  <td>298</td>
+                  <td>12</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 60px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 4%; height: 100%; background: var(--amber);"></div>
+                      </div>
+                      <span>4.0%</span>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>2024-11-29</td>
+                  <td>412</td>
+                  <td>25</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 60px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 6%; height: 100%; background: var(--red);"></div>
+                      </div>
+                      <span>6.1%</span>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>2024-11-28</td>
+                  <td>385</td>
+                  <td>15</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 60px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 3.9%; height: 100%; background: var(--amber);"></div>
+                      </div>
+                      <span>3.9%</span>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>2024-11-27</td>
+                  <td>276</td>
+                  <td>8</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 60px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 2.9%; height: 100%; background: var(--teal);"></div>
+                      </div>
+                      <span>2.9%</span>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>Alert Breakdown by Definition</h3>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Alert Type</th>
+                  <th>Count</th>
+                  <th>% of Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Cash ≥ EUR 10k</td>
+                  <td>28</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 80px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 36%; height: 100%; background: var(--red);"></div>
+                      </div>
+                      <span>36%</span>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>Velocity ≥ EUR 5k in 1h</td>
+                  <td>22</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 80px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 28%; height: 100%; background: var(--amber);"></div>
+                      </div>
+                      <span>28%</span>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>External transfer ≥ EUR 10k</td>
+                  <td>15</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 80px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 19%; height: 100%; background: var(--amber);"></div>
+                      </div>
+                      <span>19%</span>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>Large transaction ≥ EUR 50k</td>
+                  <td>8</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 80px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 10%; height: 100%; background: var(--teal);"></div>
+                      </div>
+                      <span>10%</span>
+                    </div>
+                  </td>
+                </tr>
+                <tr>
+                  <td>High-risk customer ≥ EUR 1k</td>
+                  <td>5</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 80px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 6%; height: 100%; background: var(--teal);"></div>
+                      </div>
+                      <span>6%</span>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="risk-analysis" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Risk Analysis</h2>
+            <p class="muted">Customer risk distribution and trends</p>
+          </div>
+          <button class="btn ghost">Export CSV</button>
+        </div>
+        <div class="grid stats">
+          <div class="card">
+            <p class="label">High Risk Customers</p>
+            <p id="highRiskCount" class="metric">-</p>
+            <span class="badge red">Critical</span>
+          </div>
+          <div class="card">
+            <p class="label">Medium Risk Customers</p>
+            <p id="mediumRiskCount" class="metric">-</p>
+            <span class="badge amber">Monitor</span>
+          </div>
+          <div class="card">
+            <p class="label">Low Risk Customers</p>
+            <p id="lowRiskCount" class="metric">-</p>
+            <span class="badge teal">Normal</span>
+          </div>
+          <div class="card">
+            <p class="label">Avg Risk Score</p>
+            <p id="avgRiskScore" class="metric">-</p>
+            <span class="badge purple">Overall</span>
+          </div>
+        </div>
+        <div class="grid two" style="margin-top: 18px;">
+          <div class="card">
+            <div class="card-head">
+              <h3>Risk Level Distribution</h3>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Risk Level</th>
+                  <th>Count</th>
+                  <th>Percentage</th>
+                  <th>Trend</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><span class="badge red">High</span></td>
+                  <td>20</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 100px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 4%; height: 100%; background: var(--red);"></div>
+                      </div>
+                      <span>4%</span>
+                    </div>
+                  </td>
+                  <td style="color: var(--red);">↑ +2</td>
+                </tr>
+                <tr>
+                  <td><span class="badge amber">Medium</span></td>
+                  <td>104</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 100px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 19%; height: 100%; background: var(--amber);"></div>
+                      </div>
+                      <span>19%</span>
+                    </div>
+                  </td>
+                  <td style="color: var(--amber);">↑ +5</td>
+                </tr>
+                <tr>
+                  <td><span class="badge teal">Low</span></td>
+                  <td>421</td>
+                  <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                      <div style="width: 100px; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden;">
+                        <div style="width: 77%; height: 100%; background: var(--teal);"></div>
+                      </div>
+                      <span>77%</span>
+                    </div>
+                  </td>
+                  <td style="color: var(--teal);">↓ -7</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>Top Risk Indicators</h3>
+            </div>
+            <div class="list">
+              <div class="row">
+                <div>
+                  <div class="title">PEP Flag</div>
+                  <div class="subtitle">Politically Exposed Persons</div>
+                </div>
+                <span class="badge red">12 customers</span>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="title">Sanctions Hit</div>
+                  <div class="subtitle">Sanctions screening matches</div>
+                </div>
+                <span class="badge red">3 customers</span>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="title">High Geography Risk</div>
+                  <div class="subtitle">High-risk jurisdictions</div>
+                </div>
+                <span class="badge amber">28 customers</span>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="title">High Product Risk</div>
+                  <div class="subtitle">Complex product usage</div>
+                </div>
+                <span class="badge amber">45 customers</span>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="title">High Behavior Risk</div>
+                  <div class="subtitle">Unusual transaction patterns</div>
+                </div>
+                <span class="badge amber">62 customers</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="users" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Users</h2>
+            <p class="muted">Manage system users and access controls</p>
+          </div>
+          <button class="btn primary">New User</button>
+        </div>
+        <div class="card">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Last Login</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Alexandru Popescu</td>
+                <td>alex.popescu@trustrelay.com</td>
+                <td><span class="badge purple">Admin</span></td>
+                <td><span class="badge teal">Active</span></td>
+                <td>2024-12-01 14:32</td>
+                <td>
+                  <div style="display: flex; gap: 6px;">
+                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Edit</button>
+                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Disable</button>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td>Maria Ionescu</td>
+                <td>maria.ionescu@trustrelay.com</td>
+                <td><span class="badge teal">Analyst</span></td>
+                <td><span class="badge teal">Active</span></td>
+                <td>2024-12-01 10:15</td>
+                <td>
+                  <div style="display: flex; gap: 6px;">
+                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Edit</button>
+                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Disable</button>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td>Andrei Stoica</td>
+                <td>andrei.stoica@trustrelay.com</td>
+                <td><span class="badge amber">Manager</span></td>
+                <td><span class="badge teal">Active</span></td>
+                <td>2024-11-30 18:45</td>
+                <td>
+                  <div style="display: flex; gap: 6px;">
+                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Edit</button>
+                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Disable</button>
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td>Elena Dumitrescu</td>
+                <td>elena.dumitrescu@trustrelay.com</td>
+                <td><span class="badge teal">Analyst</span></td>
+                <td><span class="badge red">Disabled</span></td>
+                <td>2024-11-15 09:22</td>
+                <td>
+                  <div style="display: flex; gap: 6px;">
+                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Edit</button>
+                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px; color: var(--primary);">Enable</button>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="roles" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Roles & Permissions</h2>
+            <p class="muted">Configure role-based access controls</p>
+          </div>
+          <button class="btn primary">New Role</button>
+        </div>
+        <div class="grid two">
+          <div class="card">
+            <div class="card-head">
+              <h3>System Roles</h3>
+            </div>
+            <div class="list">
+              <div class="row">
+                <div>
+                  <div class="title">Administrator</div>
+                  <div class="subtitle">Full system access and configuration</div>
+                  <div class="chips">
+                    <span class="chip">read:*</span>
+                    <span class="chip">write:*</span>
+                    <span class="chip">admin:*</span>
+                  </div>
+                </div>
+                <div class="row-actions">
+                  <span class="badge purple">3 users</span>
+                  <button class="btn ghost">Edit</button>
+                </div>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="title">Compliance Manager</div>
+                  <div class="subtitle">Manage alerts, customers, and reports</div>
+                  <div class="chips">
+                    <span class="chip">read:customers</span>
+                    <span class="chip">write:alerts</span>
+                    <span class="chip">read:reports</span>
+                  </div>
+                </div>
+                <div class="row-actions">
+                  <span class="badge amber">5 users</span>
+                  <button class="btn ghost">Edit</button>
+                </div>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="title">AML Analyst</div>
+                  <div class="subtitle">Review alerts and customer profiles</div>
+                  <div class="chips">
+                    <span class="chip">read:customers</span>
+                    <span class="chip">read:alerts</span>
+                    <span class="chip">write:alerts</span>
+                  </div>
+                </div>
+                <div class="row-actions">
+                  <span class="badge teal">12 users</span>
+                  <button class="btn ghost">Edit</button>
+                </div>
+              </div>
+              <div class="row">
+                <div>
+                  <div class="title">Read-Only Auditor</div>
+                  <div class="subtitle">View-only access for compliance audits</div>
+                  <div class="chips">
+                    <span class="chip">read:customers</span>
+                    <span class="chip">read:alerts</span>
+                    <span class="chip">read:reports</span>
+                  </div>
+                </div>
+                <div class="row-actions">
+                  <span class="badge teal">2 users</span>
+                  <button class="btn ghost">Edit</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-head">
+              <h3>Permission Matrix</h3>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Resource</th>
+                  <th>Admin</th>
+                  <th>Manager</th>
+                  <th>Analyst</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Customers</td>
+                  <td><span class="badge teal">Full</span></td>
+                  <td><span class="badge teal">Full</span></td>
+                  <td><span class="badge amber">Read</span></td>
+                </tr>
+                <tr>
+                  <td>Alerts</td>
+                  <td><span class="badge teal">Full</span></td>
+                  <td><span class="badge teal">Full</span></td>
+                  <td><span class="badge teal">Full</span></td>
+                </tr>
+                <tr>
+                  <td>Transactions</td>
+                  <td><span class="badge teal">Full</span></td>
+                  <td><span class="badge amber">Read</span></td>
+                  <td><span class="badge amber">Read</span></td>
+                </tr>
+                <tr>
+                  <td>Reports</td>
+                  <td><span class="badge teal">Full</span></td>
+                  <td><span class="badge teal">Full</span></td>
+                  <td><span class="badge amber">Read</span></td>
+                </tr>
+                <tr>
+                  <td>User Management</td>
+                  <td><span class="badge teal">Full</span></td>
+                  <td><span class="badge red">None</span></td>
+                  <td><span class="badge red">None</span></td>
+                </tr>
+                <tr>
+                  <td>Integrations</td>
+                  <td><span class="badge teal">Full</span></td>
+                  <td><span class="badge amber">Read</span></td>
+                  <td><span class="badge red">None</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="audit-log" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Audit Log</h2>
+            <p class="muted">System activity and user action history</p>
+          </div>
+          <div class="inline">
+            <select>
+              <option value="">All Actions</option>
+              <option value="create">Create</option>
+              <option value="update">Update</option>
+              <option value="delete">Delete</option>
+              <option value="login">Login</option>
+            </select>
+            <select>
+              <option value="">All Users</option>
+              <option value="alex">Alexandru Popescu</option>
+              <option value="maria">Maria Ionescu</option>
+              <option value="andrei">Andrei Stoica</option>
+            </select>
+          </div>
+        </div>
+        <div class="card">
+          <table>
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>User</th>
+                <th>Action</th>
+                <th>Resource</th>
+                <th>Details</th>
+                <th>IP Address</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>2024-12-01 14:32:15</td>
+                <td>Alexandru Popescu</td>
+                <td><span class="badge teal">Update</span></td>
+                <td>Customer</td>
+                <td>Updated risk level for John Doe</td>
+                <td>192.168.1.45</td>
+              </tr>
+              <tr>
+                <td>2024-12-01 13:18:42</td>
+                <td>Maria Ionescu</td>
+                <td><span class="badge amber">Close</span></td>
+                <td>Alert</td>
+                <td>Closed alert #12345 (false positive)</td>
+                <td>192.168.1.78</td>
+              </tr>
+              <tr>
+                <td>2024-12-01 12:05:33</td>
+                <td>Andrei Stoica</td>
+                <td><span class="badge purple">Create</span></td>
+                <td>Customer</td>
+                <td>Created new customer: Jane Smith</td>
+                <td>192.168.1.92</td>
+              </tr>
+              <tr>
+                <td>2024-12-01 10:15:20</td>
+                <td>Maria Ionescu</td>
+                <td><span class="badge teal">Login</span></td>
+                <td>Authentication</td>
+                <td>Successful login</td>
+                <td>192.168.1.78</td>
+              </tr>
+              <tr>
+                <td>2024-12-01 09:45:12</td>
+                <td>Alexandru Popescu</td>
+                <td><span class="badge purple">Create</span></td>
+                <td>Alert Definition</td>
+                <td>Created new alert rule: VELOCITY_CHECK_2H</td>
+                <td>192.168.1.45</td>
+              </tr>
+              <tr>
+                <td>2024-12-01 09:22:05</td>
+                <td>Alexandru Popescu</td>
+                <td><span class="badge teal">Login</span></td>
+                <td>Authentication</td>
+                <td>Successful login</td>
+                <td>192.168.1.45</td>
+              </tr>
+              <tr>
+                <td>2024-11-30 18:45:33</td>
+                <td>Andrei Stoica</td>
+                <td><span class="badge red">Delete</span></td>
+                <td>API Key</td>
+                <td>Revoked API key: dev_key_123</td>
+                <td>192.168.1.92</td>
+              </tr>
+              <tr>
+                <td>2024-11-30 17:30:18</td>
+                <td>Maria Ionescu</td>
+                <td><span class="badge amber">Update</span></td>
+                <td>Alert</td>
+                <td>Updated status to in_progress for alert #12344</td>
+                <td>192.168.1.78</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="settings" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Settings</h2>
+            <p class="muted">Configure platform settings and risk parameters</p>
+          </div>
+        </div>
+
+        <div class="card" style="padding: 0; overflow: hidden;">
+          <div class="settings-tabs">
+            <button class="settings-tab active" data-tab="company-info">Company Information</button>
+            <button class="settings-tab" data-tab="risk-matrix">Risk Matrix</button>
+            <button class="settings-tab" data-tab="geography-risk">Geography Risk</button>
+            <button class="settings-tab" data-tab="integrations">Integrations</button>
+          </div>
+
+          <div class="settings-content">
+            <!-- Company Information Tab -->
+            <div id="company-info" class="settings-tab-content active">
+              <form id="companyForm" class="form" style="padding: 24px;">
+                <h3 style="margin-top: 0;">Company Details</h3>
+
+                <label>
+                  Company Name
+                  <input name="company_name" type="text" placeholder="e.g., TrustRelay Financial Services" />
+                </label>
+
+                <label>
+                  Registration Number
+                  <input name="registration_number" type="text" placeholder="e.g., 12345678" />
+                </label>
+
+                <label>
+                  Address
+                  <input name="address_line1" type="text" placeholder="Street address" />
+                </label>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                  <label>
+                    City
+                    <input name="city" type="text" placeholder="City" />
+                  </label>
+                  <label>
+                    Postal Code
+                    <input name="postal_code" type="text" placeholder="Postal code" />
+                  </label>
+                </div>
+
+                <label>
+                  Country
+                  <input name="country" type="text" placeholder="Country" />
+                </label>
+
+                <h3 style="margin-top: 24px;">Contact Information</h3>
+
+                <label>
+                  Email
+                  <input name="contact_email" type="email" placeholder="contact@example.com" />
+                </label>
+
+                <label>
+                  Phone
+                  <input name="contact_phone" type="tel" placeholder="+1 234 567 8900" />
+                </label>
+
+                <label>
+                  Website
+                  <input name="website" type="url" placeholder="https://example.com" />
+                </label>
+
+                <h3 style="margin-top: 24px;">Compliance Officer</h3>
+
+                <label>
+                  Name
+                  <input name="compliance_officer_name" type="text" placeholder="Full name" />
+                </label>
+
+                <label>
+                  Email
+                  <input name="compliance_officer_email" type="email" placeholder="compliance@example.com" />
+                </label>
+
+                <label>
+                  Phone
+                  <input name="compliance_officer_phone" type="tel" placeholder="+1 234 567 8900" />
+                </label>
+
+                <button type="submit" class="btn primary" style="margin-top: 16px;">Save Company Information</button>
+              </form>
+            </div>
+
+            <!-- Risk Matrix Tab -->
+            <div id="risk-matrix" class="settings-tab-content">
+              <form id="riskMatrixForm" class="form" style="padding: 24px;">
+                <h3 style="margin-top: 0;">Risk Calculation Weights</h3>
+                <p class="muted" style="margin-bottom: 20px;">
+                  Configure the weights used in risk score calculation. Total weight should equal 80% (remainder is for penalty flags).
+                </p>
+
+                <div style="background: rgba(91,224,179,0.08); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 20px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <span style="font-weight: 600;">Current Formula:</span>
+                    <span id="formulaPreview" style="font-family: monospace; font-size: 13px; color: var(--primary);">
+                      (geo × 30 + prod × 20 + behav × 30) / 8
+                    </span>
+                  </div>
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: 600;">Total Weight:</span>
+                    <span id="totalWeight" style="font-size: 18px; font-weight: 700; color: var(--primary);">80%</span>
+                  </div>
+                </div>
+
+                <label>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span>Geography Risk Weight (%)</span>
+                    <span class="badge teal" style="font-size: 11px;">Current: 30%</span>
+                  </div>
+                  <input name="geography_weight" type="number" min="0" max="100" step="1" value="30" />
+                </label>
+
+                <label>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span>Product Risk Weight (%)</span>
+                    <span class="badge teal" style="font-size: 11px;">Current: 20%</span>
+                  </div>
+                  <input name="product_weight" type="number" min="0" max="100" step="1" value="20" />
+                </label>
+
+                <label>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span>Behavior Risk Weight (%)</span>
+                    <span class="badge teal" style="font-size: 11px;">Current: 30%</span>
+                  </div>
+                  <input name="behavior_weight" type="number" min="0" max="100" step="1" value="30" />
+                </label>
+
+                <h3 style="margin-top: 24px;">Penalty Points</h3>
+                <p class="muted" style="margin-bottom: 20px;">
+                  Points added to the risk score when flags are triggered.
+                </p>
+
+                <label>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span>PEP Flag Penalty</span>
+                    <span class="badge amber" style="font-size: 11px;">Current: +10</span>
+                  </div>
+                  <input name="pep_penalty" type="number" min="0" max="50" step="1" value="10" />
+                </label>
+
+                <label>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span>Sanctions Hit Penalty</span>
+                    <span class="badge red" style="font-size: 11px;">Current: +15</span>
+                  </div>
+                  <input name="sanctions_penalty" type="number" min="0" max="50" step="1" value="15" />
+                </label>
+
+                <label>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span>Adverse Media Penalty</span>
+                    <span class="badge purple" style="font-size: 11px;">Current: +5</span>
+                  </div>
+                  <input name="adverse_media_penalty" type="number" min="0" max="50" step="1" value="5" />
+                </label>
+
+                <h3 style="margin-top: 24px;">Risk Level Thresholds</h3>
+                <p class="muted" style="margin-bottom: 20px;">
+                  Define score thresholds for risk level classification (1-100 scale).
+                </p>
+
+                <label>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span>High Risk Threshold</span>
+                    <span class="badge red" style="font-size: 11px;">≥ 70</span>
+                  </div>
+                  <input name="high_threshold" type="number" min="1" max="100" step="1" value="70" />
+                </label>
+
+                <label>
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                    <span>Medium Risk Threshold</span>
+                    <span class="badge amber" style="font-size: 11px;">≥ 40</span>
+                  </div>
+                  <input name="medium_threshold" type="number" min="1" max="100" step="1" value="40" />
+                </label>
+
+                <p class="muted" style="margin-top: 8px; font-size: 12px;">
+                  Scores below the medium threshold are classified as "low" risk.
+                </p>
+
+                <div style="display: flex; gap: 10px; margin-top: 24px;">
+                  <button type="submit" class="btn primary">Save Risk Matrix</button>
+                  <button type="button" id="resetRiskMatrix" class="btn outline">Reset to Defaults</button>
+                </div>
+              </form>
+            </div>
+
+            <!-- Geography Risk Tab -->
+            <div id="geography-risk" class="settings-tab-content">
+              <div style="padding: 24px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                  <div>
+                    <h3 style="margin: 0;">Country Risk Scores</h3>
+                    <p class="muted" style="margin: 4px 0 0 0;">Assign risk scores (1-10) to countries for geographic risk assessment</p>
+                  </div>
+                  <button id="addCountryBtn" class="btn primary">Add Country</button>
+                </div>
+
+                <div style="margin-bottom: 16px;">
+                  <input id="countrySearchInput" type="search" placeholder="Search countries..." style="width: 100%; max-width: 300px;" />
+                </div>
+
+                <div class="country-risk-table">
+                  <!-- Table populated by JavaScript -->
+                </div>
+              </div>
+            </div>
+
+            <!-- Integrations Tab -->
+            <div id="integrations" class="settings-tab-content">
+              <div style="padding: 24px;">
+                <h3 style="margin-top: 0;">External Integrations</h3>
+                <p class="muted" style="margin-bottom: 24px;">Connect external services and manage data flows</p>
+
+                <div class="grid three" style="gap: 16px;">
+                  <div class="card settings-card" data-target="webhooks" style="cursor: pointer;">
+                    <div style="font-size: 24px; margin-bottom: 8px;">🔗</div>
+                    <h4>Webhooks</h4>
+                    <p class="muted" style="font-size: 13px;">Configure webhook endpoints for event notifications</p>
+                  </div>
+                  <div class="card settings-card" data-target="api-keys" style="cursor: pointer;">
+                    <div style="font-size: 24px; margin-bottom: 8px;">🔑</div>
+                    <h4>API Keys</h4>
+                    <p class="muted" style="font-size: 13px;">Manage API keys for external integrations</p>
+                  </div>
+                  <div class="card settings-card" data-target="data-exports" style="cursor: pointer;">
+                    <div style="font-size: 24px; margin-bottom: 8px;">📤</div>
+                    <h4>Data Exports</h4>
+                    <p class="muted" style="font-size: 13px;">Export data for compliance and reporting</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </main>
   </div>
 
   <div id="modal" class="modal hidden">
-    <div class="modal-content">
+    <div class="modal-content" style="width: min(700px, 95vw); max-height: 90vh; overflow-y: auto;">
       <div class="modal-head">
         <h3 id="modalTitle">Create Customer</h3>
         <button id="closeModal" class="btn icon">&times;</button>
       </div>
       <form id="customerForm" class="form">
-        <label>Full name <input name="full_name" required /></label>
-        <label>Email <input name="email" type="email" /></label>
-        <label>Country <input name="country" /></label>
-        <label>ID expiry <input name="id_document_expiry" type="date" /></label>
-        <label>Geography risk <input name="geography_risk" type="number" min="0" max="10" value="0" /></label>
-        <label>Product risk <input name="product_risk" type="number" min="0" max="10" value="0" /></label>
-        <label>Behavior risk <input name="behavior_risk" type="number" min="0" max="10" value="0" /></label>
-        <label class="checkbox"><input name="pep_flag" type="checkbox" /> PEP</label>
-        <label class="checkbox"><input name="sanctions_hit" type="checkbox" /> Sanctions hit</label>
-        <label>Manual override <input name="risk_override" placeholder="e.g. elevate to high" /></label>
+        <!-- Basic Info Section -->
+        <div style="margin-bottom: 16px; padding: 12px; background: rgba(91,224,179,0.05); border: 1px solid var(--border); border-radius: 10px;">
+          <div style="margin-bottom: 12px; font-size: 13px; color: var(--primary); font-weight: 600;">Basic Information</div>
+          <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+            <label>Member ID <input name="member_id" placeholder="e.g. 161390" /></label>
+            <label>Status <select name="status">
+              <option value="PENDING">Pending</option>
+              <option value="ACTIVE">Active</option>
+              <option value="SUSPENDED">Suspended</option>
+              <option value="CLOSED">Closed</option>
+            </select></label>
+          </div>
+          <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+            <label>First Name <input name="first_name" required placeholder="e.g. John" /></label>
+            <label>Last Name <input name="last_name" required placeholder="e.g. Doe" /></label>
+          </div>
+          <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+            <label>Phone Number <input name="phone_number" type="tel" placeholder="e.g. 40766259918" /></label>
+            <label>Email <input name="email" type="email" placeholder="e.g. john@example.com" /></label>
+          </div>
+        </div>
+
+        <!-- Personal Details Section -->
+        <div style="margin-bottom: 16px; padding: 12px; background: rgba(91,224,179,0.05); border: 1px solid var(--border); border-radius: 10px;">
+          <div style="margin-bottom: 12px; font-size: 13px; color: var(--primary); font-weight: 600;">Personal Details</div>
+          <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+            <label>Birth Date <input name="birth_date" type="date" /></label>
+            <label>Identity Number (CNP) <input name="identity_number" placeholder="e.g. 2781119436018" /></label>
+          </div>
+          <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+            <label>Place of Birth <input name="place_of_birth" placeholder="e.g. Bucuresti, Sector 3" /></label>
+            <label>Country of Birth <input name="country_of_birth" placeholder="e.g. ROMANIA" /></label>
+          </div>
+          <label>Employer Name <input name="employer_name" placeholder="e.g. Company SRL" /></label>
+        </div>
+
+        <!-- Address Section -->
+        <div style="margin-bottom: 16px; padding: 12px; background: rgba(91,224,179,0.05); border: 1px solid var(--border); border-radius: 10px;">
+          <div style="margin-bottom: 12px; font-size: 13px; color: var(--primary); font-weight: 600;">Address</div>
+          <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+            <label>County <input name="address_county" placeholder="e.g. Bucuresti, Sector 3" /></label>
+            <label>City <input name="address_city" placeholder="e.g. Bucuresti" /></label>
+          </div>
+          <div class="grid" style="grid-template-columns: 2fr 1fr; gap: 12px;">
+            <label>Street <input name="address_street" placeholder="e.g. Patulului" /></label>
+            <label>House No. <input name="address_house_number" placeholder="e.g. 4" /></label>
+          </div>
+          <div class="grid" style="grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+            <label>Block <input name="address_block_number" placeholder="e.g. v9" /></label>
+            <label>Entrance <input name="address_entrance" placeholder="e.g. c" /></label>
+            <label>Apartment <input name="address_apartment" placeholder="e.g. 165" /></label>
+          </div>
+        </div>
+
+        <!-- Document Info Section -->
+        <div style="margin-bottom: 16px; padding: 12px; background: rgba(91,224,179,0.05); border: 1px solid var(--border); border-radius: 10px;">
+          <div style="margin-bottom: 12px; font-size: 13px; color: var(--primary); font-weight: 600;">Document Information</div>
+          <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+            <label>Document Type <select name="document_type">
+              <option value="">Select...</option>
+              <option value="PERSONAL_ID">Personal ID</option>
+              <option value="PASSPORT">Passport</option>
+              <option value="DRIVING_LICENSE">Driving License</option>
+            </select></label>
+            <label>Document ID <input name="document_id" placeholder="e.g. RD836425" /></label>
+          </div>
+          <label>Document Issuer <input name="document_issuer" placeholder="e.g. Authorised authority in Romania" /></label>
+          <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+            <label>Issue Date <input name="document_date_of_issue" type="date" /></label>
+            <label>Expiry Date <input name="document_date_of_expire" type="date" /></label>
+          </div>
+        </div>
+
+        <!-- Financial/Credit Section -->
+        <div style="margin-bottom: 16px; padding: 12px; background: rgba(91,224,179,0.05); border: 1px solid var(--border); border-radius: 10px;">
+          <div style="margin-bottom: 12px; font-size: 13px; color: var(--primary); font-weight: 600;">Financial Information</div>
+          <div class="grid" style="grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+            <label>Monthly Repayment <input name="leanpay_monthly_repayment" type="number" step="0.01" value="0" /></label>
+            <label>Credit Limit <input name="available_monthly_credit_limit" type="number" step="0.01" value="0" /></label>
+            <label>Available Exposure <input name="available_exposure" type="number" step="0.01" value="0" /></label>
+          </div>
+        </div>
+
+        <!-- Validation & Consent Section -->
+        <div style="margin-bottom: 16px; padding: 12px; background: rgba(91,224,179,0.05); border: 1px solid var(--border); border-radius: 10px;">
+          <div style="margin-bottom: 12px; font-size: 13px; color: var(--primary); font-weight: 600;">Validation & Consent</div>
+          <div class="grid" style="grid-template-columns: 1fr 1fr; gap: 12px;">
+            <label>Data Validated <select name="data_validated">
+              <option value="NOT VALIDATED">Not Validated</option>
+              <option value="VALIDATED">Validated</option>
+              <option value="PENDING">Pending</option>
+            </select></label>
+            <label>Marketing Consent <select name="marketing_consent">
+              <option value="NOT SET">Not Set</option>
+              <option value="ACCEPTED">Accepted</option>
+              <option value="REJECTED">Rejected</option>
+            </select></label>
+          </div>
+          <label class="checkbox" style="margin-top: 8px;">
+            <input name="kyc_motion_consent_given" type="checkbox" />
+            <span>KYC Motion Consent Given</span>
+          </label>
+        </div>
+
+        <!-- Risk Indicators Section -->
+        <div style="margin-bottom: 16px; padding: 12px; background: rgba(91,224,179,0.08); border: 1px solid var(--border); border-radius: 10px;">
+          <div style="margin-bottom: 8px; font-size: 13px; color: var(--primary); font-weight: 600;">Risk Indicators (1-10 scale)</div>
+          <div class="grid" style="grid-template-columns: 1fr 1fr 1fr; gap: 12px;">
+            <label>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <span>Geography</span>
+                <span class="badge teal" style="font-size: 10px; padding: 2px 6px;">30%</span>
+              </div>
+              <input name="geography_risk" type="number" min="1" max="10" step="0.1" value="1" />
+            </label>
+            <label>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <span>Product</span>
+                <span class="badge teal" style="font-size: 10px; padding: 2px 6px;">20%</span>
+              </div>
+              <input name="product_risk" type="number" min="1" max="10" step="0.1" value="1" />
+            </label>
+            <label>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <span>Behavior</span>
+                <span class="badge teal" style="font-size: 10px; padding: 2px 6px;">30%</span>
+              </div>
+              <input name="behavior_risk" type="number" min="1" max="10" step="0.1" value="1" />
+            </label>
+          </div>
+          <div style="display: flex; gap: 12px; margin-top: 8px;">
+            <label class="checkbox" style="flex: 1;">
+              <input name="pep_flag" type="checkbox" />
+              <span>PEP <span style="color: var(--amber); font-size: 11px;">(+10)</span></span>
+            </label>
+            <label class="checkbox" style="flex: 1;">
+              <input name="sanctions_hit" type="checkbox" />
+              <span>Sanctions <span style="color: var(--red); font-size: 11px;">(+15)</span></span>
+            </label>
+          </div>
+          <div id="riskPreview" style="margin-top: 12px; padding: 10px; background: rgba(0,0,0,0.2); border-radius: 8px; display: none;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-size: 12px; color: var(--muted);">Calculated Risk Score (1-100):</span>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <span id="riskScorePreview" style="font-size: 18px; font-weight: 700;">10.00</span>
+                <span id="riskLevelPreview" class="badge">low</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <label>Manual Risk Override <input name="risk_override" placeholder="e.g. elevate to high" /></label>
         <button class="btn primary" type="submit">Create</button>
       </form>
     </div>
@@ -281,6 +1923,54 @@
         </select></label>
         <label class="checkbox"><input name="enabled" type="checkbox" checked /> Enabled</label>
         <button class="btn primary" type="submit">Save</button>
+      </form>
+    </div>
+  </div>
+
+  <div id="workflowModal" class="modal hidden">
+    <div class="modal-content" style="width: min(520px, 90vw)">
+      <div class="modal-head">
+        <h3 id="workflowModalTitle">Start Workflow</h3>
+        <button id="closeWorkflowModal" class="btn icon">&times;</button>
+      </div>
+      <form id="workflowForm" class="form">
+        <input type="hidden" id="workflowType" name="workflow_type" />
+
+        <div id="workflowDescription" style="background: rgba(91,224,179,0.08); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 16px;">
+          <p id="workflowDescText" class="muted" style="margin: 0; font-size: 13px;"></p>
+        </div>
+
+        <label>
+          Customer
+          <select id="workflowCustomerId" name="customer_id" required>
+            <option value="">Select a customer...</option>
+          </select>
+        </label>
+
+        <div id="kycRefreshParams" style="display: none;">
+          <label>
+            Days Before Expiry
+            <input name="days_before" type="number" min="1" max="730" value="365" />
+            <span style="font-size: 12px; color: var(--muted); display: block; margin-top: 4px;">
+              Check for documents expiring within this many days (default: 1 year)
+            </span>
+          </label>
+        </div>
+
+        <div id="sanctionsParams" style="display: none;">
+          <label class="checkbox">
+            <input name="hit_detected" type="checkbox" />
+            <span>Simulate Sanctions Hit (for testing)</span>
+          </label>
+          <p style="font-size: 12px; color: var(--muted); margin: 8px 0 0 28px;">
+            When checked, the workflow will create an alert as if a sanctions match was found
+          </p>
+        </div>
+
+        <div style="display: flex; gap: 10px; margin-top: 16px;">
+          <button class="btn primary" type="submit" style="flex: 1;">Start Execution</button>
+          <button class="btn outline" type="button" onclick="toggleModal(false, 'workflowModal')">Cancel</button>
+        </div>
       </form>
     </div>
   </div>
