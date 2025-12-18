@@ -38,6 +38,7 @@ const state = {
   alertDefinitions: [],
   tasks: [],
   taskDefinitions: [],
+  users: [],
   selectedTask: null,
   reports: {
     highRisk: [],
@@ -53,7 +54,8 @@ const state = {
 };
 
 // Current user (in production, get from auth)
-const CURRENT_USER = 'analyst@company.com';
+let currentUser = null;
+const CURRENT_USER_EMAIL = 'analyst@company.com';
 
 const navButtons = document.querySelectorAll(".nav-item");
 const accordionTriggers = document.querySelectorAll(".accordion-trigger");
@@ -828,6 +830,15 @@ async function loadTasks() {
   renderTasks();
 }
 
+async function loadUsers() {
+  const data = await fetchJSON('/users?is_active=true');
+  state.users = data ?? [];
+  // Set current user based on email (in production, use auth)
+  if (!currentUser && state.users.length > 0) {
+    currentUser = state.users.find(u => u.email === CURRENT_USER_EMAIL) || state.users[0];
+  }
+}
+
 async function loadAlertDefinitions() {
   const data = await fetchJSON("/alert-definitions");
   state.alertDefinitions = data ?? [];
@@ -1263,7 +1274,7 @@ function renderTasks() {
     const matchesStatus = !status || t.status === status;
     const matchesType = !type || t.task_type === type;
     const matchesPriority = !priority || t.priority === priority;
-    const matchesUnclaimed = !unclaimedOnly || !t.claimed_by;
+    const matchesUnclaimed = !unclaimedOnly || (!t.claimed_by_id && !t.assigned_to);
     return matchesSearch && matchesStatus && matchesType && matchesPriority && matchesUnclaimed;
   });
 
@@ -1277,23 +1288,72 @@ function renderTasks() {
     return map[s] || "muted";
   };
 
+  const priorityBadge = (p) => {
+    const map = {
+      low: "muted",
+      medium: "amber",
+      high: "red",
+      critical: "red",
+    };
+    return map[p] || "muted";
+  };
+
+  const isMyTask = (t) => currentUser && (t.claimed_by_id === currentUser.id || t.assigned_to === currentUser.id);
+  const isOverdue = (t) => t.due_date && new Date(t.due_date) < new Date() && t.status !== 'completed';
+
+  // Generate assignment/claim chip based on task status
+  const getAssignmentChip = (t) => {
+    // For completed/cancelled tasks, show who completed it
+    if (t.status === 'completed' || t.status === 'cancelled') {
+      if (t.claimed_by_name) {
+        return `<span class="chip muted">By: ${t.claimed_by_name}</span>`;
+      }
+      return '';
+    }
+    // For active tasks, show assignment status
+    if (t.assigned_to) {
+      return `<span class="chip blue">Assigned: ${t.assigned_to_name || 'User'}</span>`;
+    }
+    if (t.claimed_by_id) {
+      return `<span class="chip ${isMyTask(t) ? 'teal' : ''}">${isMyTask(t) ? 'My task' : (t.claimed_by_name || 'Claimed')}</span>`;
+    }
+    return '<span class="chip amber">Unclaimed</span>';
+  };
+
   const list = rows
     .map(
       (t) => `
-        <div class="row">
-          <div>
-            <div class="title">${t.title}</div>
-            <div class="subtitle">${t.description || ""}</div>
-            <div class="chips">
-              <span class="chip">${t.task_type}</span>
-              <span class="chip ${statusBadge(t.status)}">${t.status}</span>
-              <span class="chip">${t.priority}</span>
-              ${t.alert_id ? `<span class="chip">Alert #${t.alert_id}</span>` : ""}
+        <div class="task-card ${isOverdue(t) ? 'overdue' : ''} ${isMyTask(t) ? 'my-claim' : ''}" data-task-id="${t.id}">
+          <div class="task-card-header">
+            <div class="task-card-title">
+              <span class="title">${t.title}</span>
+              ${t.customer_name ? `<span class="customer-link" onclick="viewCustomer('${t.customer_id}')">${t.customer_name}</span>` : ''}
+            </div>
+            <div class="task-badges">
+              <span class="badge ${priorityBadge(t.priority)}">${t.priority}</span>
+              <span class="badge ${statusBadge(t.status)}">${t.status}</span>
+              ${t.workflow_status ? `<span class="badge blue">${t.workflow_status}</span>` : ''}
             </div>
           </div>
-          <div class="row-actions" style="gap: 8px;">
-            ${t.workflow_status ? `<span class="badge">${t.workflow_status}</span>` : ""}
-            <span class="badge ${statusBadge(t.status)}">${t.status}</span>
+          <div class="task-card-body">
+            <div class="task-meta">
+              <span class="chip">${t.task_type.replace('_', ' ')}</span>
+              ${t.alert_id ? `<span class="chip">Alert #${t.alert_id}</span>` : ''}
+              ${getAssignmentChip(t)}
+              ${isOverdue(t) ? '<span class="chip red">Overdue</span>' : ''}
+            </div>
+            ${t.description ? `<p class="task-description">${t.description}</p>` : ''}
+            ${t.due_date ? `<p class="task-due">Due: ${new Date(t.due_date).toLocaleString()}</p>` : ''}
+          </div>
+          <div class="task-card-actions">
+            <button class="btn ghost" onclick="viewTaskDetail(${t.id})">View</button>
+            ${t.status === 'pending' && !t.claimed_by_id && !t.assigned_to ? `<button class="btn primary" onclick="claimTask(${t.id})">Claim</button>` : ''}
+            ${t.status === 'in_progress' && isMyTask(t) ? `
+              <button class="btn ghost" onclick="releaseTask(${t.id})">Release</button>
+              <button class="btn primary" onclick="completeTaskPrompt(${t.id})">Complete</button>
+              ${!t.workflow_id ? `<button class="btn ghost" onclick="startTaskWorkflow(${t.id})">Start Workflow</button>` : ''}
+            ` : ''}
+            ${t.status === 'pending' || (t.status === 'in_progress' && isMyTask(t)) ? `<button class="btn ghost red" onclick="cancelTask(${t.id})">Cancel</button>` : ''}
           </div>
         </div>
       `
@@ -1302,6 +1362,33 @@ function renderTasks() {
 
   const container = document.getElementById("taskList");
   if (container) container.innerHTML = list || emptyState("No tasks yet");
+
+  // Update task stats
+  renderTaskStats();
+}
+
+function renderTaskStats() {
+  const tasks = state.tasks;
+  const pendingCount = tasks.filter(t => t.status === 'pending').length;
+  const inProgressCount = tasks.filter(t => t.status === 'in_progress').length;
+  const criticalCount = tasks.filter(t => t.priority === 'critical' && t.status !== 'completed').length;
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+  const dueTodayCount = tasks.filter(t => {
+    if (!t.due_date || t.status === 'completed') return false;
+    const due = new Date(t.due_date);
+    return due <= today;
+  }).length;
+
+  const pendingEl = document.getElementById('taskPendingCount');
+  const inProgressEl = document.getElementById('taskInProgressCount');
+  const criticalEl = document.getElementById('taskCriticalCount');
+  const dueTodayEl = document.getElementById('taskDueTodayCount');
+
+  if (pendingEl) pendingEl.textContent = pendingCount;
+  if (inProgressEl) inProgressEl.textContent = inProgressCount;
+  if (criticalEl) criticalEl.textContent = criticalCount;
+  if (dueTodayEl) dueTodayEl.textContent = dueTodayCount;
 }
 
 async function handleAlertAction(event) {
@@ -1685,6 +1772,8 @@ function sampleAlerts() {
 }
 
 async function loadAll() {
+  // Load users first to set currentUser before other loads
+  await loadUsers();
   await Promise.all([
     loadCustomers(),
     loadTransactions(),
@@ -2436,9 +2525,6 @@ const workflowModal = document.getElementById('workflowModal');
 const workflowForm = document.getElementById('workflowForm');
 const closeWorkflowModalBtn = document.getElementById('closeWorkflowModal');
 const workflowDetailsPanel = document.getElementById('workflowDetailsPanel');
-const refreshTaskWorkflowsBtn = document.getElementById('refreshTaskWorkflows');
-const runningWorkflowsList = document.getElementById('runningWorkflowsList');
-const completedWorkflowsList = document.getElementById('completedWorkflowsList');
 
 let allWorkflows = [];
 let currentWorkflowType = '';
@@ -2541,7 +2627,6 @@ async function loadWorkflows() {
     allWorkflows = workflows;
     updateWorkflowStats();
     renderWorkflows();
-    renderTaskWorkflows();
   } catch (error) {
     console.error('Error loading workflows:', error);
     const listView = document.getElementById('workflowsListView');
@@ -2649,55 +2734,6 @@ function formatRelativeTime(dateString) {
   if (diffHour < 24) return `${diffHour}h ago`;
   if (diffDay < 7) return `${diffDay}d ago`;
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-}
-
-function renderTaskWorkflows() {
-  if (!runningWorkflowsList || !completedWorkflowsList) return;
-
-  const running = allWorkflows.filter(wf => wf.status === 'RUNNING').slice(0, 5);
-  const closed = allWorkflows
-    .filter(wf => ['COMPLETED', 'FAILED', 'CANCELED'].includes(wf.status))
-    .sort((a, b) => new Date(b.close_time || b.start_time) - new Date(a.close_time || a.start_time))
-    .slice(0, 6);
-
-  const statusBadge = (status) => {
-    const map = {
-      'COMPLETED': 'teal',
-      'RUNNING': 'amber',
-      'FAILED': 'red',
-      'CANCELED': 'purple',
-    };
-    return map[status] || 'muted';
-  };
-
-  const renderItem = (wf) => {
-    const title = wf.workflow_type || 'Workflow';
-    const started = wf.start_time ? formatRelativeTime(wf.start_time) : '-';
-    const duration = wf.start_time
-      ? formatDuration(new Date(wf.close_time || Date.now()) - new Date(wf.start_time))
-      : '-';
-    return `
-      <div class="row" style="align-items: center;">
-        <div>
-          <div class="title">${title}</div>
-          <div class="subtitle" style="font-family: monospace; font-size: 11px;">${wf.workflow_id.substring(0, 22)}...</div>
-          <div class="subtitle">Started ${started} • ${duration}</div>
-        </div>
-        <div class="row-actions" style="gap: 8px;">
-          <span class="badge ${statusBadge(wf.status)}">${wf.status}</span>
-          <button class="btn ghost" onclick="viewWorkflowDetails('${wf.workflow_id}', '${wf.run_id}')">Details</button>
-        </div>
-      </div>
-    `;
-  };
-
-  runningWorkflowsList.innerHTML = running.length
-    ? running.map(renderItem).join('')
-    : emptyState("No running workflows");
-
-  completedWorkflowsList.innerHTML = closed.length
-    ? closed.map(renderItem).join('')
-    : emptyState("No closed workflows yet");
 }
 
 // Render workflows as a list view
@@ -2964,9 +3000,6 @@ window.closeWorkflowDetails = closeWorkflowDetails;
 if (refreshWorkflowsBtn) {
   refreshWorkflowsBtn.addEventListener('click', loadWorkflows);
 }
-if (refreshTaskWorkflowsBtn) {
-  refreshTaskWorkflowsBtn.addEventListener('click', loadWorkflows);
-}
 
 // Filters
 if (workflowStatusFilter) {
@@ -2984,14 +3017,11 @@ if (workflowExecutionsNavItem) {
   });
 }
 
-// Load workflows when viewing tasks to surface running/closed workflows under task management
+// Load tasks when viewing tasks panel
 const tasksNavItem = document.querySelector('[data-target="tasks"]');
 if (tasksNavItem) {
   tasksNavItem.addEventListener('click', () => {
-    setTimeout(() => {
-      loadTasks();
-      loadWorkflows();
-    }, 150);
+    setTimeout(loadTasks, 150);
   });
 }
 
@@ -3039,3 +3069,615 @@ async function loadWorkflowsWithAutoRefresh() {
 
 // Replace global reference
 window.loadWorkflows = loadWorkflowsWithAutoRefresh;
+
+// ===========================================
+// Task Management Functions
+// ===========================================
+
+async function claimTask(taskId) {
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Cannot claim task without a user session');
+    return;
+  }
+  try {
+    const result = await fetchJSON(`/tasks/${taskId}/claim`, {
+      method: 'POST',
+      body: JSON.stringify({ claimed_by_id: currentUser.id }),
+    });
+    if (result) {
+      showToast('success', 'Task claimed', 'You have claimed this task');
+      await loadTasks();
+    }
+  } catch (error) {
+    showToast('error', 'Claim failed', error.message || 'Unable to claim task');
+  }
+}
+
+async function releaseTask(taskId) {
+  try {
+    const result = await fetchJSON(`/tasks/${taskId}/release`, {
+      method: 'POST',
+    });
+    if (result) {
+      showToast('info', 'Task released', 'Task returned to queue');
+      await loadTasks();
+    }
+  } catch (error) {
+    showToast('error', 'Release failed', error.message || 'Unable to release task');
+  }
+}
+
+async function completeTaskPrompt(taskId) {
+  const notes = prompt('Enter resolution notes (optional):');
+  if (notes === null) return; // User cancelled
+
+  try {
+    const result = await fetchJSON(`/tasks/${taskId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({
+        completed_by_id: currentUser?.id || null,
+        completed_by: currentUser?.full_name || CURRENT_USER_EMAIL,
+        resolution_notes: notes || null,
+      }),
+    });
+    if (result) {
+      showToast('success', 'Task completed', 'Task marked as completed');
+      await loadTasks();
+      await loadAlerts(); // Refresh alerts since completing a task may close linked alert
+      toggleTaskDetailModal(false);
+    }
+  } catch (error) {
+    showToast('error', 'Complete failed', error.message || 'Unable to complete task');
+  }
+}
+
+async function cancelTask(taskId) {
+  const reason = prompt('Enter cancellation reason (optional):');
+  if (reason === null) return; // User cancelled
+
+  try {
+    const result = await fetchJSON(`/tasks/${taskId}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({
+        cancelled_by_id: currentUser?.id || null,
+        cancelled_by: currentUser?.full_name || CURRENT_USER_EMAIL,
+        reason: reason || null,
+      }),
+    });
+    if (result) {
+      showToast('info', 'Task cancelled', 'Task has been cancelled');
+      await loadTasks();
+      toggleTaskDetailModal(false);
+    }
+  } catch (error) {
+    showToast('error', 'Cancel failed', error.message || 'Unable to cancel task');
+  }
+}
+
+// ===========================================
+// Task Notes Functions
+// ===========================================
+
+async function addTaskNote(taskId) {
+  const content = prompt('Enter note:');
+  if (!content) return;
+
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Cannot add note without a user session');
+    return;
+  }
+
+  try {
+    const result = await fetchJSON(`/tasks/${taskId}/notes`, {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: currentUser.id,
+        content: content,
+      }),
+    });
+    if (result) {
+      showToast('success', 'Note added', 'Your note has been added');
+      // Refresh the task detail view
+      await viewTaskDetail(taskId);
+    }
+  } catch (error) {
+    showToast('error', 'Add note failed', error.message || 'Unable to add note');
+  }
+}
+
+// ===========================================
+// Task Attachment Functions
+// ===========================================
+
+async function uploadTaskAttachment(taskId, file) {
+  if (!file) return;
+
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Cannot upload attachment without a user session');
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('user_id', currentUser.id);
+
+  try {
+    const response = await fetch(`${API_BASE}/tasks/${taskId}/attachments`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Upload failed');
+    }
+
+    showToast('success', 'File uploaded', 'Attachment has been added');
+    // Refresh the task detail view
+    await viewTaskDetail(taskId);
+  } catch (error) {
+    showToast('error', 'Upload failed', error.message || 'Unable to upload attachment');
+  }
+}
+
+async function downloadTaskAttachment(taskId, attachmentId) {
+  try {
+    const response = await fetch(`${API_BASE}/tasks/${taskId}/attachments/${attachmentId}/download`);
+    if (!response.ok) {
+      throw new Error('Download failed');
+    }
+
+    const blob = await response.blob();
+    const contentDisposition = response.headers.get('Content-Disposition');
+    const filenameMatch = contentDisposition && contentDisposition.match(/filename="?([^"]+)"?/);
+    const filename = filenameMatch ? filenameMatch[1] : 'attachment';
+
+    // Create download link
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+  } catch (error) {
+    showToast('error', 'Download failed', error.message || 'Unable to download attachment');
+  }
+}
+
+// ===========================================
+// Task Assignment Functions
+// ===========================================
+
+async function showAssignTaskModal(taskId) {
+  // Build user select options
+  const userOptions = state.users
+    .filter(u => u.is_active)
+    .map(u => `<option value="${u.id}">${u.full_name} (${u.role})</option>`)
+    .join('');
+
+  const html = `
+    <div style="padding: 16px;">
+      <h3 style="margin-top: 0;">Assign Task</h3>
+      <div style="margin-bottom: 16px;">
+        <label class="label">Select Analyst</label>
+        <select id="assignTaskUserSelect" class="input" style="width: 100%;">
+          <option value="">Choose analyst...</option>
+          ${userOptions}
+        </select>
+      </div>
+      <div style="display: flex; gap: 8px; justify-content: flex-end;">
+        <button class="btn ghost" onclick="toggleAssignModal(false)">Cancel</button>
+        <button class="btn primary" onclick="assignTask(${taskId})">Assign</button>
+      </div>
+    </div>
+  `;
+
+  // Create or update modal
+  let modal = document.getElementById('assignTaskModal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'assignTaskModal';
+    modal.className = 'modal';
+    modal.innerHTML = `<div class="modal-content" style="max-width: 400px;"></div>`;
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) toggleAssignModal(false);
+    });
+    document.body.appendChild(modal);
+  }
+
+  modal.querySelector('.modal-content').innerHTML = html;
+  modal.classList.remove('hidden');
+}
+
+function toggleAssignModal(show) {
+  const modal = document.getElementById('assignTaskModal');
+  if (modal) {
+    if (show) {
+      modal.classList.remove('hidden');
+    } else {
+      modal.classList.add('hidden');
+    }
+  }
+}
+
+async function assignTask(taskId) {
+  const selectEl = document.getElementById('assignTaskUserSelect');
+  const assignedTo = selectEl?.value;
+
+  if (!assignedTo) {
+    showToast('error', 'No user selected', 'Please select a user to assign the task to');
+    return;
+  }
+
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Cannot assign task without a user session');
+    return;
+  }
+
+  try {
+    const result = await fetchJSON(`/tasks/${taskId}/assign`, {
+      method: 'POST',
+      body: JSON.stringify({
+        assigned_to: assignedTo,
+        assigned_by: currentUser.id,
+      }),
+    });
+
+    if (result) {
+      showToast('success', 'Task assigned', 'Task has been assigned to the selected analyst');
+      toggleAssignModal(false);
+      await loadTasks();
+      await viewTaskDetail(taskId);
+    }
+  } catch (error) {
+    showToast('error', 'Assignment failed', error.message || 'Unable to assign task');
+  }
+}
+
+async function startTaskWorkflow(taskId) {
+  try {
+    const result = await fetchJSON(`/tasks/${taskId}/start-workflow`, {
+      method: 'POST',
+    });
+    if (result) {
+      showToast('success', 'Workflow started', `Workflow ${result.workflow_id} started`);
+      await loadTasks();
+      await loadWorkflows();
+    }
+  } catch (error) {
+    showToast('error', 'Workflow start failed', error.message || 'Unable to start workflow');
+  }
+}
+
+async function viewTaskDetail(taskId) {
+  try {
+    // Load task, notes, and attachments in parallel
+    const [task, notes, attachments] = await Promise.all([
+      fetchJSON(`/tasks/${taskId}`),
+      fetchJSON(`/tasks/${taskId}/notes`),
+      fetchJSON(`/tasks/${taskId}/attachments`),
+    ]);
+    if (!task) return;
+
+    state.selectedTask = task;
+
+    const statusBadge = (s) => {
+      const map = { pending: 'amber', in_progress: 'blue', completed: 'teal', cancelled: 'purple' };
+      return map[s] || 'muted';
+    };
+
+    const priorityBadge = (p) => {
+      const map = { low: 'muted', medium: 'amber', high: 'red', critical: 'red' };
+      return map[p] || 'muted';
+    };
+
+    const isMyTask = currentUser && (task.claimed_by_id === currentUser.id || task.assigned_to === currentUser.id);
+    const canManage = currentUser && ['manager', 'admin'].includes(currentUser.role);
+    const isActive = task.status !== 'completed' && task.status !== 'cancelled';
+
+    // Assignment display
+    const getAssignmentDisplay = () => {
+      if (task.assigned_to) {
+        return `<span class="chip blue">Assigned: ${task.assigned_to_name || 'User'}</span>`;
+      }
+      if (task.claimed_by_id) {
+        return `<span class="chip ${isMyTask ? 'teal' : ''}">${task.claimed_by_name || 'Claimed'}</span>`;
+      }
+      return '<span class="chip amber">Unclaimed</span>';
+    };
+
+    // Notes section
+    const notesHtml = (notes || []).map(n => `
+      <div class="task-note" style="padding: 8px; margin: 4px 0; background: var(--bg-muted); border-radius: 4px;">
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">
+          ${n.user_name || 'Unknown'} - ${new Date(n.created_at).toLocaleString()}
+        </div>
+        <p style="margin: 0;">${n.content}</p>
+      </div>
+    `).join('') || '<p style="color: var(--text-muted);">No notes yet</p>';
+
+    // Attachments section
+    const attachmentsHtml = (attachments || []).map(a => `
+      <div class="task-attachment" style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--bg-muted); border-radius: 4px; margin: 4px 0;">
+        <span style="flex: 1;">${a.original_filename}</span>
+        <span style="font-size: 12px; color: var(--text-muted);">${(a.file_size / 1024).toFixed(1)} KB</span>
+        <button class="btn ghost" onclick="downloadTaskAttachment(${task.id}, ${a.id})">Download</button>
+      </div>
+    `).join('') || '<p style="color: var(--text-muted);">No attachments</p>';
+
+    const content = `
+      <div class="task-detail">
+        <div class="task-detail-header">
+          <div class="badges" style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
+            <span class="badge ${statusBadge(task.status)}">${task.status}</span>
+            <span class="badge ${priorityBadge(task.priority)}">${task.priority}</span>
+            <span class="chip">${task.task_type.replace('_', ' ')}</span>
+            ${getAssignmentDisplay()}
+            ${task.workflow_status ? `<span class="badge blue">${task.workflow_status}</span>` : ''}
+          </div>
+        </div>
+
+        <div class="task-detail-body" style="display: grid; gap: 16px;">
+          ${task.description ? `
+            <div>
+              <label class="label">Description</label>
+              <p>${task.description}</p>
+            </div>
+          ` : ''}
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <div>
+              <label class="label">Customer</label>
+              <p>${task.customer_name ? `<a href="#" onclick="viewCustomer('${task.customer_id}')">${task.customer_name}</a>` : '-'}</p>
+            </div>
+            <div>
+              <label class="label">Alert</label>
+              <p>${task.alert_id ? `#${task.alert_id} - ${task.alert_scenario || ''}` : '-'}</p>
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <div>
+              <label class="label">Created</label>
+              <p>${task.created_at ? new Date(task.created_at).toLocaleString() : '-'}</p>
+            </div>
+            <div>
+              <label class="label">Due Date</label>
+              <p>${task.due_date ? new Date(task.due_date).toLocaleString() : '-'}</p>
+            </div>
+          </div>
+
+          ${task.assigned_to ? `
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+              <div>
+                <label class="label">Assigned To</label>
+                <p>${task.assigned_to_name || '-'}</p>
+              </div>
+              <div>
+                <label class="label">Assigned At</label>
+                <p>${task.assigned_at ? new Date(task.assigned_at).toLocaleString() : '-'}</p>
+              </div>
+            </div>
+          ` : ''}
+
+          ${task.claimed_by_id ? `
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+              <div>
+                <label class="label">Claimed By</label>
+                <p>${task.claimed_by_name || task.claimed_by || '-'}</p>
+              </div>
+              <div>
+                <label class="label">Claimed At</label>
+                <p>${task.claimed_at ? new Date(task.claimed_at).toLocaleString() : '-'}</p>
+              </div>
+            </div>
+          ` : ''}
+
+          ${task.workflow_id ? `
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+              <div>
+                <label class="label">Workflow ID</label>
+                <p style="font-family: monospace; font-size: 12px;">${task.workflow_id}</p>
+              </div>
+              <div>
+                <label class="label">Run ID</label>
+                <p style="font-family: monospace; font-size: 12px;">${task.workflow_run_id || '-'}</p>
+              </div>
+            </div>
+          ` : ''}
+
+          ${task.completed_at ? `
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+              <div>
+                <label class="label">Completed By</label>
+                <p>${task.completed_by || '-'}</p>
+              </div>
+              <div>
+                <label class="label">Completed At</label>
+                <p>${new Date(task.completed_at).toLocaleString()}</p>
+              </div>
+            </div>
+            ${task.resolution_notes ? `
+              <div>
+                <label class="label">Resolution Notes</label>
+                <p>${task.resolution_notes}</p>
+              </div>
+            ` : ''}
+          ` : ''}
+
+          <!-- Notes Section -->
+          <div style="border-top: 1px solid var(--border-color); padding-top: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <label class="label" style="margin: 0;">Notes</label>
+              ${isActive ? `<button class="btn ghost" onclick="addTaskNote(${task.id})">+ Add Note</button>` : ''}
+            </div>
+            <div id="taskNotesContainer" style="max-height: 200px; overflow-y: auto;">
+              ${notesHtml}
+            </div>
+          </div>
+
+          <!-- Attachments Section -->
+          <div style="border-top: 1px solid var(--border-color); padding-top: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <label class="label" style="margin: 0;">Attachments</label>
+              ${isActive ? `<button class="btn ghost" onclick="document.getElementById('taskAttachmentInput').click()">+ Upload</button>` : ''}
+            </div>
+            <input type="file" id="taskAttachmentInput" style="display: none;" onchange="uploadTaskAttachment(${task.id}, this.files[0])">
+            <div id="taskAttachmentsContainer">
+              ${attachmentsHtml}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    let actions = '';
+    if (task.status === 'pending' && !task.claimed_by_id && !task.assigned_to) {
+      actions = `<button class="btn primary" onclick="claimTask(${task.id})">Claim Task</button>`;
+    } else if (task.status === 'in_progress' && isMyTask) {
+      actions = `
+        <button class="btn ghost" onclick="releaseTask(${task.id})">Release</button>
+        ${!task.workflow_id ? `<button class="btn ghost" onclick="startTaskWorkflow(${task.id})">Start Workflow</button>` : ''}
+        <button class="btn primary" onclick="completeTaskPrompt(${task.id})">Complete Task</button>
+      `;
+    }
+    // Manager can assign tasks
+    if (canManage && isActive && !task.assigned_to) {
+      actions += `<button class="btn ghost" onclick="showAssignTaskModal(${task.id})">Assign</button>`;
+    }
+    if (isActive) {
+      actions += `<button class="btn ghost red" onclick="cancelTask(${task.id})">Cancel</button>`;
+    }
+
+    document.getElementById('taskDetailTitle').textContent = task.title;
+    document.getElementById('taskDetailContent').innerHTML = content;
+    document.getElementById('taskDetailActions').innerHTML = actions;
+
+    toggleTaskDetailModal(true);
+  } catch (error) {
+    showToast('error', 'Load failed', error.message || 'Unable to load task details');
+  }
+}
+
+function toggleTaskModal(show) {
+  const modal = document.getElementById('taskModal');
+  if (!modal) return;
+
+  if (show) {
+    modal.classList.remove('hidden');
+    // Populate customer and alert dropdowns
+    const customerSelect = document.getElementById('taskCustomerSelect');
+    const alertSelect = document.getElementById('taskAlertSelect');
+
+    if (customerSelect) {
+      customerSelect.innerHTML = '<option value="">Select customer...</option>' +
+        state.customers.map(c => `<option value="${c.id}">${c.full_name || c.first_name + ' ' + c.last_name}</option>`).join('');
+    }
+
+    if (alertSelect) {
+      alertSelect.innerHTML = '<option value="">Select alert...</option>' +
+        state.alerts.filter(a => a.status === 'open').map(a => `<option value="${a.id}">#${a.id} - ${a.scenario}</option>`).join('');
+    }
+  } else {
+    modal.classList.add('hidden');
+    document.getElementById('taskForm')?.reset();
+  }
+}
+
+function toggleTaskDetailModal(show) {
+  const modal = document.getElementById('taskDetailModal');
+  if (!modal) return;
+
+  if (show) {
+    modal.classList.remove('hidden');
+  } else {
+    modal.classList.add('hidden');
+    state.selectedTask = null;
+  }
+}
+
+async function createTaskFromAlert(alertId, scenario, customerId) {
+  // Pre-fill the task modal with alert context
+  toggleTaskModal(true);
+
+  const form = document.getElementById('taskForm');
+  if (!form) return;
+
+  // Set values
+  form.querySelector('[name="task_type"]').value = 'investigation';
+  form.querySelector('[name="title"]').value = `Investigate Alert #${alertId}: ${scenario}`;
+  form.querySelector('[name="description"]').value = `Follow up on alert ${scenario} for investigation and resolution.`;
+
+  if (customerId) {
+    const customerSelect = document.getElementById('taskCustomerSelect');
+    if (customerSelect) customerSelect.value = customerId;
+  }
+
+  const alertSelect = document.getElementById('taskAlertSelect');
+  if (alertSelect) alertSelect.value = alertId;
+}
+
+// Task form submit handler
+const taskForm = document.getElementById('taskForm');
+if (taskForm) {
+  taskForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const formData = new FormData(e.target);
+    const payload = {
+      task_type: formData.get('task_type'),
+      title: formData.get('title'),
+      description: formData.get('description') || null,
+      priority: formData.get('priority') || 'medium',
+      due_date: formData.get('due_date') || null,
+      customer_id: formData.get('customer_id') || null,
+      alert_id: formData.get('alert_id') ? parseInt(formData.get('alert_id'), 10) : null,
+      created_by: CURRENT_USER,
+    };
+
+    try {
+      const result = await fetchJSON('/tasks', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      if (result) {
+        showToast('success', 'Task created', 'New task has been created');
+        toggleTaskModal(false);
+        await loadTasks();
+      }
+    } catch (error) {
+      showToast('error', 'Create failed', error.message || 'Unable to create task');
+    }
+  });
+}
+
+// Task modal close buttons
+const closeTaskModalBtn = document.getElementById('closeTaskModal');
+if (closeTaskModalBtn) {
+  closeTaskModalBtn.addEventListener('click', () => toggleTaskModal(false));
+}
+
+const closeTaskDetailModalBtn = document.getElementById('closeTaskDetailModal');
+if (closeTaskDetailModalBtn) {
+  closeTaskDetailModalBtn.addEventListener('click', () => toggleTaskDetailModal(false));
+}
+
+// Create task button
+const createTaskBtn = document.getElementById('createTaskBtn');
+if (createTaskBtn) {
+  createTaskBtn.addEventListener('click', () => toggleTaskModal(true));
+}
+
+// Export task functions to window for onclick handlers
+window.claimTask = claimTask;
+window.releaseTask = releaseTask;
+window.completeTaskPrompt = completeTaskPrompt;
+window.cancelTask = cancelTask;
+window.startTaskWorkflow = startTaskWorkflow;
+window.viewTaskDetail = viewTaskDetail;
+window.toggleTaskModal = toggleTaskModal;
+window.toggleTaskDetailModal = toggleTaskDetailModal;
+window.createTaskFromAlert = createTaskFromAlert;

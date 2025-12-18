@@ -1006,3 +1006,177 @@ tr.customer-selected:hover td {
     opacity: 0;
   }
 }
+
+/* ===========================================
+   Task Management Styles
+   =========================================== */
+
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.task-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.task-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  border-color: var(--primary);
+}
+
+.task-card.my-claim {
+  border-left: 4px solid var(--teal);
+}
+
+.task-card.overdue {
+  border-left: 4px solid var(--red);
+  background: color-mix(in srgb, var(--red) 5%, var(--card));
+}
+
+.task-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.task-card-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.task-card-title .title {
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.task-card-title .customer-link {
+  font-size: 12px;
+  color: var(--teal);
+  cursor: pointer;
+}
+
+.task-card-title .customer-link:hover {
+  text-decoration: underline;
+}
+
+.task-badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.task-card-body {
+  margin-bottom: 12px;
+}
+
+.task-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.task-description {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 8px 0;
+  line-height: 1.5;
+}
+
+.task-due {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 0 0;
+}
+
+.task-card-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.task-card-actions .btn {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.task-card-actions .btn.red {
+  color: var(--red);
+}
+
+.task-card-actions .btn.red:hover {
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+
+/* Task Detail Modal */
+.task-detail {
+  padding: 8px 0;
+}
+
+.task-detail .label {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+  display: block;
+}
+
+.task-detail p {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* Priority badge colors */
+.badge.critical,
+.chip.critical {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  color: var(--red);
+}
+
+/* Chip color variations */
+.chip.blue {
+  background: color-mix(in srgb, #3b82f6 15%, transparent);
+  color: #3b82f6;
+  border-color: color-mix(in srgb, #3b82f6 30%, transparent);
+}
+
+.chip.teal {
+  background: color-mix(in srgb, var(--teal) 15%, transparent);
+  color: var(--teal);
+  border-color: color-mix(in srgb, var(--teal) 30%, transparent);
+}
+
+.chip.amber {
+  background: color-mix(in srgb, var(--amber) 15%, transparent);
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 30%, transparent);
+}
+
+.chip.muted {
+  background: var(--bg-muted);
+  color: var(--muted);
+}
+
+.chip.red {
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+  color: var(--red);
+  border-color: color-mix(in srgb, var(--red) 30%, transparent);
+}
+
+/* Workflow badge in task cards */
+.task-card .badge.blue {
+  background: color-mix(in srgb, var(--teal) 15%, transparent);
+  color: var(--teal);
+}

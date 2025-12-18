@@ -38,6 +38,7 @@ from .models import (
 from .risk import calculate_risk
 from .streaming import router as streaming_router
 from .tasks import router as tasks_router, definition_router as task_definitions_router
+from .users import router as users_router
 
 app = FastAPI(title="AML Compliance MVP", version="0.1.0")
 
@@ -55,6 +56,9 @@ app.include_router(streaming_router)
 # Register task management routers
 app.include_router(tasks_router)
 app.include_router(task_definitions_router)
+
+# Register user management router
+app.include_router(users_router)
 
 # Global Temporal client
 temporal_client: Optional[TemporalClient] = None

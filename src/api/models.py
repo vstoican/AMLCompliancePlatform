@@ -255,18 +255,27 @@ class Task(BaseModel):
     task_type: str
     priority: str
     status: str
-    claimed_by: Optional[str] = None
+    # Assignment fields
+    assigned_to: Optional[UUID] = None
+    assigned_by: Optional[UUID] = None
+    assigned_at: Optional[datetime] = None
+    claimed_by_id: Optional[UUID] = None
+    claimed_by: Optional[str] = None  # Legacy text field for backward compatibility
     claimed_at: Optional[datetime] = None
+    # Workflow fields
     workflow_id: Optional[str] = None
     workflow_run_id: Optional[str] = None
     workflow_status: Optional[str] = None
+    # Task content
     title: str
     description: Optional[str] = None
     details: dict[str, Any] = Field(default_factory=dict)
     due_date: Optional[datetime] = None
+    # Completion fields
     completed_at: Optional[datetime] = None
     completed_by: Optional[str] = None
     resolution_notes: Optional[str] = None
+    # Timestamps
     created_at: datetime
     updated_at: datetime
     created_by: Optional[str] = None
@@ -275,6 +284,9 @@ class Task(BaseModel):
     customer_risk_level: Optional[str] = None
     alert_scenario: Optional[str] = None
     alert_severity: Optional[str] = None
+    # Joined user names
+    assigned_to_name: Optional[str] = None
+    claimed_by_name: Optional[str] = None
 
 
 class TaskCreate(BaseModel):
@@ -295,15 +307,28 @@ class TaskUpdate(BaseModel):
     description: Optional[str] = None
     due_date: Optional[datetime] = None
     resolution_notes: Optional[str] = None
+    details: Optional[dict[str, Any]] = None  # Allow editing task details
 
 
 class TaskClaim(BaseModel):
-    claimed_by: str
+    claimed_by_id: UUID  # Changed to UUID reference
 
 
 class TaskComplete(BaseModel):
-    completed_by: str
+    completed_by_id: Optional[UUID] = None
+    completed_by: Optional[str] = None  # Fallback for legacy
     resolution_notes: Optional[str] = None
+
+
+class TaskAssign(BaseModel):
+    assigned_to: UUID
+    assigned_by: UUID
+
+
+class TaskCancel(BaseModel):
+    cancelled_by_id: Optional[UUID] = None
+    cancelled_by: Optional[str] = None  # Fallback for legacy
+    reason: Optional[str] = None
 
 
 # =============================================================================
@@ -346,3 +371,71 @@ class TaskDefinitionUpdate(BaseModel):
     description_template: Optional[str] = None
     enabled: Optional[bool] = None
     auto_start_workflow: Optional[bool] = None
+
+
+# =============================================================================
+# USER MODELS
+# =============================================================================
+
+USER_ROLES = ["analyst", "senior_analyst", "manager", "admin"]
+
+
+class User(BaseModel):
+    id: UUID
+    email: str
+    full_name: str
+    role: str
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class UserCreate(BaseModel):
+    email: str
+    full_name: str
+    role: str = "analyst"
+
+
+class UserUpdate(BaseModel):
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+# =============================================================================
+# TASK NOTE MODELS
+# =============================================================================
+
+class TaskNote(BaseModel):
+    id: int
+    task_id: int
+    user_id: Optional[UUID] = None
+    content: str
+    created_at: datetime
+    updated_at: datetime
+    # Joined field
+    user_name: Optional[str] = None
+
+
+class TaskNoteCreate(BaseModel):
+    user_id: UUID
+    content: str
+
+
+# =============================================================================
+# TASK ATTACHMENT MODELS
+# =============================================================================
+
+class TaskAttachment(BaseModel):
+    id: int
+    task_id: int
+    user_id: Optional[UUID] = None
+    filename: str
+    original_filename: str
+    file_path: str
+    file_size: int
+    content_type: str
+    created_at: datetime
+    # Joined field
+    user_name: Optional[str] = None

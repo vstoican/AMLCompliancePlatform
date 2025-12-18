@@ -1,14 +1,18 @@
 """
 Task Management API endpoints
 """
+import os
+import uuid as uuid_module
 from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, status
+from fastapi.responses import StreamingResponse
 from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from io import BytesIO
 
 from .db import connection
 from .models import (
@@ -17,6 +21,11 @@ from .models import (
     TaskUpdate,
     TaskClaim,
     TaskComplete,
+    TaskAssign,
+    TaskCancel,
+    TaskNote,
+    TaskNoteCreate,
+    TaskAttachment,
     TaskDefinition,
     TaskDefinitionCreate,
     TaskDefinitionUpdate,
@@ -24,6 +33,11 @@ from .models import (
     TASK_STATUSES,
     TASK_PRIORITIES,
 )
+from . import s3
+
+# File upload configuration
+MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))  # 10MB
+ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg", ".txt", ".csv"}
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 definition_router = APIRouter(prefix="/task-definitions", tags=["task-definitions"])
@@ -73,10 +87,14 @@ async def list_tasks(
                COALESCE(c.first_name || ' ' || c.last_name, c.full_name) as customer_name,
                c.risk_level as customer_risk_level,
                a.scenario as alert_scenario,
-               a.severity as alert_severity
+               a.severity as alert_severity,
+               u_assigned.full_name as assigned_to_name,
+               u_claimed.full_name as claimed_by_name
         FROM tasks t
         LEFT JOIN customers c ON c.id = t.customer_id
         LEFT JOIN alerts a ON a.id = t.alert_id
+        LEFT JOIN users u_assigned ON u_assigned.id = t.assigned_to
+        LEFT JOIN users u_claimed ON u_claimed.id = t.claimed_by_id
         {where}
         ORDER BY
             CASE t.priority
@@ -110,10 +128,14 @@ async def get_task(
                    COALESCE(c.first_name || ' ' || c.last_name, c.full_name) as customer_name,
                    c.risk_level as customer_risk_level,
                    a.scenario as alert_scenario,
-                   a.severity as alert_severity
+                   a.severity as alert_severity,
+                   u_assigned.full_name as assigned_to_name,
+                   u_claimed.full_name as claimed_by_name
             FROM tasks t
             LEFT JOIN customers c ON c.id = t.customer_id
             LEFT JOIN alerts a ON a.id = t.alert_id
+            LEFT JOIN users u_assigned ON u_assigned.id = t.assigned_to
+            LEFT JOIN users u_claimed ON u_claimed.id = t.claimed_by_id
             WHERE t.id = %s
         """, (task_id,))
         row = await cur.fetchone()
@@ -232,15 +254,21 @@ async def claim_task(
 ) -> Task:
     """Claim a task from the shared queue"""
     async with conn.cursor(row_factory=dict_row) as cur:
+        # Verify user exists
+        await cur.execute("SELECT id, email FROM users WHERE id = %s", (str(payload.claimed_by_id),))
+        user = await cur.fetchone()
+        if not user:
+            raise HTTPException(status_code=400, detail="User not found")
+
         # Check if task exists and is claimable
         await cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
         task = await cur.fetchone()
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
-        if task["claimed_by"] and task["claimed_by"] != payload.claimed_by:
+        if task["claimed_by_id"] and task["claimed_by_id"] != payload.claimed_by_id:
             raise HTTPException(
                 status_code=409,
-                detail=f"Task already claimed by {task['claimed_by']}"
+                detail="Task already claimed by another user"
             )
         if task["status"] not in ("pending", "in_progress"):
             raise HTTPException(
@@ -251,12 +279,13 @@ async def claim_task(
         # Claim the task
         await cur.execute("""
             UPDATE tasks
-            SET claimed_by = %s,
+            SET claimed_by_id = %s,
+                claimed_by = %s,
                 claimed_at = NOW(),
                 status = 'in_progress'
             WHERE id = %s
             RETURNING *
-        """, (payload.claimed_by, task_id))
+        """, (str(payload.claimed_by_id), user["email"], task_id))
         row = await cur.fetchone()
 
     return Task(**_serialize_task(row))
@@ -271,7 +300,8 @@ async def release_task(
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute("""
             UPDATE tasks
-            SET claimed_by = NULL,
+            SET claimed_by_id = NULL,
+                claimed_by = NULL,
                 claimed_at = NULL,
                 status = 'pending'
             WHERE id = %s AND status = 'in_progress'
@@ -294,6 +324,15 @@ async def complete_task(
     conn: AsyncConnection = Depends(connection),
 ) -> Task:
     """Mark a task as completed"""
+    # Get completed_by string from user if ID provided
+    completed_by_str = payload.completed_by
+    if payload.completed_by_id:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("SELECT email FROM users WHERE id = %s", (str(payload.completed_by_id),))
+            user = await cur.fetchone()
+            if user:
+                completed_by_str = user["email"]
+
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute("""
             UPDATE tasks
@@ -303,7 +342,7 @@ async def complete_task(
                 resolution_notes = COALESCE(%s, resolution_notes)
             WHERE id = %s
             RETURNING *
-        """, (payload.completed_by, payload.resolution_notes, task_id))
+        """, (completed_by_str, payload.resolution_notes, task_id))
         row = await cur.fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Task not found")
@@ -314,11 +353,19 @@ async def complete_task(
 @router.post("/{task_id}/cancel", response_model=Task)
 async def cancel_task(
     task_id: int,
-    cancelled_by: str = Query(...),
-    reason: Optional[str] = Query(None),
+    payload: TaskCancel,
     conn: AsyncConnection = Depends(connection),
 ) -> Task:
     """Cancel a task"""
+    # Get cancelled_by string from user if ID provided
+    cancelled_by_str = payload.cancelled_by
+    if payload.cancelled_by_id:
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("SELECT email FROM users WHERE id = %s", (str(payload.cancelled_by_id),))
+            user = await cur.fetchone()
+            if user:
+                cancelled_by_str = user["email"]
+
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute("""
             UPDATE tasks
@@ -328,13 +375,67 @@ async def cancel_task(
                 completed_at = NOW()
             WHERE id = %s AND status IN ('pending', 'in_progress')
             RETURNING *
-        """, (reason, cancelled_by, task_id))
+        """, (payload.reason, cancelled_by_str, task_id))
         row = await cur.fetchone()
         if not row:
             raise HTTPException(
                 status_code=404,
                 detail="Task not found or already completed/cancelled"
             )
+
+    return Task(**_serialize_task(row))
+
+
+@router.post("/{task_id}/assign", response_model=Task)
+async def assign_task(
+    task_id: int,
+    payload: TaskAssign,
+    conn: AsyncConnection = Depends(connection),
+) -> Task:
+    """Assign a task to a specific user (manager action)"""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        # Verify assignee exists and is active
+        await cur.execute(
+            "SELECT id, email FROM users WHERE id = %s AND is_active = TRUE",
+            (str(payload.assigned_to),)
+        )
+        assignee = await cur.fetchone()
+        if not assignee:
+            raise HTTPException(status_code=400, detail="Assignee not found or inactive")
+
+        # Verify assigner exists
+        await cur.execute("SELECT id FROM users WHERE id = %s", (str(payload.assigned_by),))
+        if not await cur.fetchone():
+            raise HTTPException(status_code=400, detail="Assigner not found")
+
+        # Check task exists and is assignable
+        await cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+        task = await cur.fetchone()
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        if task["status"] in ("completed", "cancelled"):
+            raise HTTPException(status_code=400, detail="Cannot assign completed or cancelled task")
+
+        # Assign the task
+        await cur.execute("""
+            UPDATE tasks
+            SET assigned_to = %s,
+                assigned_by = %s,
+                assigned_at = NOW(),
+                claimed_by_id = %s,
+                claimed_by = %s,
+                claimed_at = NOW(),
+                status = CASE WHEN status = 'pending' THEN 'in_progress' ELSE status END
+            WHERE id = %s
+            RETURNING *
+        """, (
+            str(payload.assigned_to),
+            str(payload.assigned_by),
+            str(payload.assigned_to),
+            assignee["email"],
+            task_id
+        ))
+        row = await cur.fetchone()
 
     return Task(**_serialize_task(row))
 
@@ -471,6 +572,249 @@ async def get_task_workflow_status(
             "status": "ERROR",
             "message": str(e)
         }
+
+
+# =============================================================================
+# TASK NOTES ENDPOINTS
+# =============================================================================
+
+@router.get("/{task_id}/notes", response_model=List[TaskNote])
+async def list_task_notes(
+    task_id: int,
+    conn: AsyncConnection = Depends(connection),
+) -> List[TaskNote]:
+    """List all notes for a task"""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        # Check task exists
+        await cur.execute("SELECT id FROM tasks WHERE id = %s", (task_id,))
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        await cur.execute("""
+            SELECT n.*, u.full_name as user_name
+            FROM task_notes n
+            LEFT JOIN users u ON u.id = n.user_id
+            WHERE n.task_id = %s
+            ORDER BY n.created_at DESC
+        """, (task_id,))
+        rows = await cur.fetchall()
+
+    return [TaskNote(**row) for row in rows]
+
+
+@router.post("/{task_id}/notes", response_model=TaskNote, status_code=status.HTTP_201_CREATED)
+async def create_task_note(
+    task_id: int,
+    payload: TaskNoteCreate,
+    conn: AsyncConnection = Depends(connection),
+) -> TaskNote:
+    """Add a note to a task"""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        # Check task exists
+        await cur.execute("SELECT id FROM tasks WHERE id = %s", (task_id,))
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Verify user exists
+        await cur.execute("SELECT id, full_name FROM users WHERE id = %s", (str(payload.user_id),))
+        user = await cur.fetchone()
+        if not user:
+            raise HTTPException(status_code=400, detail="User not found")
+
+        # Create note
+        await cur.execute("""
+            INSERT INTO task_notes (task_id, user_id, content)
+            VALUES (%s, %s, %s)
+            RETURNING *, %s as user_name
+        """, (task_id, str(payload.user_id), payload.content, user["full_name"]))
+        row = await cur.fetchone()
+
+    return TaskNote(**row)
+
+
+@router.delete("/{task_id}/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_task_note(
+    task_id: int,
+    note_id: int,
+    conn: AsyncConnection = Depends(connection),
+) -> None:
+    """Delete a task note"""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            "DELETE FROM task_notes WHERE id = %s AND task_id = %s RETURNING id",
+            (note_id, task_id)
+        )
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Note not found")
+
+
+# =============================================================================
+# TASK ATTACHMENTS ENDPOINTS
+# =============================================================================
+
+@router.get("/{task_id}/attachments", response_model=List[TaskAttachment])
+async def list_task_attachments(
+    task_id: int,
+    conn: AsyncConnection = Depends(connection),
+) -> List[TaskAttachment]:
+    """List all attachments for a task"""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        # Check task exists
+        await cur.execute("SELECT id FROM tasks WHERE id = %s", (task_id,))
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        await cur.execute("""
+            SELECT a.*, u.full_name as user_name
+            FROM task_attachments a
+            LEFT JOIN users u ON u.id = a.user_id
+            WHERE a.task_id = %s
+            ORDER BY a.created_at DESC
+        """, (task_id,))
+        rows = await cur.fetchall()
+
+    return [TaskAttachment(**row) for row in rows]
+
+
+@router.post("/{task_id}/attachments", response_model=TaskAttachment, status_code=status.HTTP_201_CREATED)
+async def upload_task_attachment(
+    task_id: int,
+    user_id: UUID = Query(..., description="User uploading the file"),
+    file: UploadFile = File(...),
+    conn: AsyncConnection = Depends(connection),
+) -> TaskAttachment:
+    """Upload an attachment to a task (stored in S3)"""
+    # Validate file extension
+    _, ext = os.path.splitext(file.filename or "")
+    if ext.lower() not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type not allowed. Allowed: {ALLOWED_EXTENSIONS}"
+        )
+
+    async with conn.cursor(row_factory=dict_row) as cur:
+        # Check task exists
+        await cur.execute("SELECT id FROM tasks WHERE id = %s", (task_id,))
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Verify user exists
+        await cur.execute("SELECT id, full_name FROM users WHERE id = %s", (str(user_id),))
+        user = await cur.fetchone()
+        if not user:
+            raise HTTPException(status_code=400, detail="User not found")
+
+        # Read file content
+        content = await file.read()
+        if len(content) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large. Max size: {MAX_FILE_SIZE / (1024 * 1024)}MB"
+            )
+
+        # Generate unique filename and S3 key
+        unique_filename = f"{uuid_module.uuid4()}{ext}"
+        s3_key = f"tasks/{task_id}/{unique_filename}"
+        content_type = file.content_type or "application/octet-stream"
+
+        # Upload to S3
+        try:
+            s3.upload_file(
+                content=content,
+                key=s3_key,
+                content_type=content_type,
+                metadata={"original_filename": file.filename or "unknown"},
+            )
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload file to storage: {str(e)}"
+            )
+
+        # Create database record (file_path stores the S3 key)
+        await cur.execute("""
+            INSERT INTO task_attachments (task_id, user_id, filename, original_filename, file_path, file_size, content_type)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING *, %s as user_name
+        """, (
+            task_id,
+            str(user_id),
+            unique_filename,
+            file.filename,
+            s3_key,  # Store S3 key as file_path
+            len(content),
+            content_type,
+            user["full_name"]
+        ))
+        row = await cur.fetchone()
+        await conn.commit()
+
+    return TaskAttachment(**row)
+
+
+@router.get("/{task_id}/attachments/{attachment_id}/download")
+async def download_task_attachment(
+    task_id: int,
+    attachment_id: int,
+    conn: AsyncConnection = Depends(connection),
+):
+    """Download a task attachment from S3"""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute("""
+            SELECT * FROM task_attachments
+            WHERE id = %s AND task_id = %s
+        """, (attachment_id, task_id))
+        attachment = await cur.fetchone()
+        if not attachment:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+
+    # Download from S3
+    s3_key = attachment["file_path"]  # file_path stores the S3 key
+    try:
+        content, content_type, _ = s3.download_file(s3_key)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"File not found in storage: {str(e)}")
+
+    # Return as streaming response
+    return StreamingResponse(
+        BytesIO(content),
+        media_type=attachment["content_type"] or content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{attachment["original_filename"]}"',
+            "Content-Length": str(len(content)),
+        }
+    )
+
+
+@router.delete("/{task_id}/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_task_attachment(
+    task_id: int,
+    attachment_id: int,
+    conn: AsyncConnection = Depends(connection),
+) -> None:
+    """Delete a task attachment from S3"""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute("""
+            SELECT file_path FROM task_attachments
+            WHERE id = %s AND task_id = %s
+        """, (attachment_id, task_id))
+        attachment = await cur.fetchone()
+        if not attachment:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+
+        # Delete file from S3
+        s3_key = attachment["file_path"]  # file_path stores the S3 key
+        try:
+            s3.delete_file(s3_key)
+        except Exception:
+            pass  # Continue even if S3 delete fails
+
+        # Delete database record
+        await cur.execute(
+            "DELETE FROM task_attachments WHERE id = %s",
+            (attachment_id,)
+        )
+        await conn.commit()
 
 
 # =============================================================================
