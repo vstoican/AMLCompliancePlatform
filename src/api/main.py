@@ -380,49 +380,149 @@ async def recalculate_risk(
 
 @app.post("/transactions")
 async def ingest_transaction(
-    payload: TransactionCreate, conn: AsyncConnection = Depends(connection)
+    payload: TransactionCreate,
+    sync: bool = Query(False, description="Write directly to DB instead of async via NATS"),
+    conn: AsyncConnection = Depends(connection),
 ) -> dict:
-    async with conn.cursor(row_factory=dict_row) as cur:
-        query = """
-            INSERT INTO transactions (
-                surrogate_id, person_first_name, person_last_name, vendor_name,
-                price_number_of_months, grace_number_of_months,
-                original_transaction_amount, amount, vendor_transaction_id,
-                client_settlement_status, vendor_settlement_status,
-                transaction_delivery_status, partial_delivery,
-                transaction_last_activity, transaction_financial_status, customer_id
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id, created_at
-        """
-        await cur.execute(
-            query,
-            (
-                payload.surrogate_id,
-                payload.person_first_name,
-                payload.person_last_name,
-                payload.vendor_name,
-                payload.price_number_of_months,
-                payload.grace_number_of_months,
-                payload.original_transaction_amount,
-                payload.amount,
-                payload.vendor_transaction_id,
-                payload.client_settlement_status,
-                payload.vendor_settlement_status,
-                payload.transaction_delivery_status,
-                payload.partial_delivery,
-                payload.transaction_last_activity,
-                payload.transaction_financial_status,
-                payload.customer_id,
-            ),
-        )
-        tx = await cur.fetchone()
+    """
+    Ingest a transaction.
 
-    await publish_event(
-        "aml.transaction.ingested",
-        {"transaction_id": tx["id"], "surrogate_id": payload.surrogate_id, "amount": payload.amount},
-    )
-    return {"id": tx["id"], "created_at": tx["created_at"]}
+    By default (sync=False), publishes to NATS for async processing by the consumer.
+    This provides higher throughput as the API returns immediately.
+
+    With sync=True, writes directly to the database (lower throughput, immediate consistency).
+    """
+    if sync:
+        # Synchronous mode: write directly to database
+        async with conn.cursor(row_factory=dict_row) as cur:
+            query = """
+                INSERT INTO transactions (
+                    surrogate_id, person_first_name, person_last_name, vendor_name,
+                    price_number_of_months, grace_number_of_months,
+                    original_transaction_amount, amount, vendor_transaction_id,
+                    client_settlement_status, vendor_settlement_status,
+                    transaction_delivery_status, partial_delivery,
+                    transaction_last_activity, transaction_financial_status, customer_id
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id, created_at
+            """
+            await cur.execute(
+                query,
+                (
+                    payload.surrogate_id,
+                    payload.person_first_name,
+                    payload.person_last_name,
+                    payload.vendor_name,
+                    payload.price_number_of_months,
+                    payload.grace_number_of_months,
+                    payload.original_transaction_amount,
+                    payload.amount,
+                    payload.vendor_transaction_id,
+                    payload.client_settlement_status,
+                    payload.vendor_settlement_status,
+                    payload.transaction_delivery_status,
+                    payload.partial_delivery,
+                    payload.transaction_last_activity,
+                    payload.transaction_financial_status,
+                    payload.customer_id,
+                ),
+            )
+            tx = await cur.fetchone()
+
+        await publish_event(
+            "aml.transaction.ingested",
+            {"transaction_id": tx["id"], "surrogate_id": payload.surrogate_id, "amount": payload.amount},
+        )
+        return {"id": tx["id"], "created_at": tx["created_at"], "mode": "sync"}
+
+    else:
+        # Async mode: publish to NATS for consumer to process
+        tx_data = {
+            "surrogate_id": payload.surrogate_id,
+            "person_first_name": payload.person_first_name,
+            "person_last_name": payload.person_last_name,
+            "vendor_name": payload.vendor_name,
+            "price_number_of_months": payload.price_number_of_months,
+            "grace_number_of_months": payload.grace_number_of_months,
+            "original_transaction_amount": float(payload.original_transaction_amount) if payload.original_transaction_amount else None,
+            "amount": float(payload.amount) if payload.amount else None,
+            "vendor_transaction_id": payload.vendor_transaction_id,
+            "client_settlement_status": payload.client_settlement_status,
+            "vendor_settlement_status": payload.vendor_settlement_status,
+            "transaction_delivery_status": payload.transaction_delivery_status,
+            "partial_delivery": payload.partial_delivery,
+            "transaction_last_activity": payload.transaction_last_activity,
+            "transaction_financial_status": payload.transaction_financial_status,
+            "customer_id": str(payload.customer_id) if payload.customer_id else None,
+        }
+
+        success = await publish_event("aml.transaction.ingest", tx_data)
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Failed to queue transaction for processing"
+            )
+
+        return {
+            "surrogate_id": payload.surrogate_id,
+            "status": "queued",
+            "mode": "async",
+            "message": "Transaction queued for processing"
+        }
+
+
+@app.post("/transactions/batch")
+async def ingest_transactions_batch(
+    transactions: List[TransactionCreate],
+) -> dict:
+    """
+    Ingest multiple transactions in a single request (async mode only).
+    Reduces HTTP overhead for high-volume ingestion.
+    Max 1000 transactions per batch.
+    """
+    if len(transactions) > 1000:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Maximum 1000 transactions per batch"
+        )
+
+    # Publish all transactions to NATS
+    success_count = 0
+    failed_count = 0
+
+    for payload in transactions:
+        tx_data = {
+            "surrogate_id": payload.surrogate_id,
+            "person_first_name": payload.person_first_name,
+            "person_last_name": payload.person_last_name,
+            "vendor_name": payload.vendor_name,
+            "price_number_of_months": payload.price_number_of_months,
+            "grace_number_of_months": payload.grace_number_of_months,
+            "original_transaction_amount": float(payload.original_transaction_amount) if payload.original_transaction_amount else None,
+            "amount": float(payload.amount) if payload.amount else None,
+            "vendor_transaction_id": payload.vendor_transaction_id,
+            "client_settlement_status": payload.client_settlement_status,
+            "vendor_settlement_status": payload.vendor_settlement_status,
+            "transaction_delivery_status": payload.transaction_delivery_status,
+            "partial_delivery": payload.partial_delivery,
+            "transaction_last_activity": payload.transaction_last_activity,
+            "transaction_financial_status": payload.transaction_financial_status,
+            "customer_id": str(payload.customer_id) if payload.customer_id else None,
+        }
+
+        if await publish_event("aml.transaction.ingest", tx_data):
+            success_count += 1
+        else:
+            failed_count += 1
+
+    return {
+        "queued": success_count,
+        "failed": failed_count,
+        "total": len(transactions),
+        "mode": "async"
+    }
 
 
 @app.get("/transactions")
@@ -430,11 +530,18 @@ async def list_transactions(
     customer_id: Optional[UUID] = Query(None),
     financial_status: Optional[str] = Query(None),
     settlement_status: Optional[str] = Query(None),
-    limit: int = Query(100, le=500),
+    search: Optional[str] = Query(None, description="Search by surrogate_id, name, or vendor"),
+    limit: int = Query(50, le=200),
+    offset: int = Query(0, ge=0),
     conn: AsyncConnection = Depends(connection),
 ):
+    """
+    List transactions with pagination.
+    Returns {transactions: [...], total: N, limit: N, offset: N, has_more: bool}
+    """
     clauses = []
     params: list = []
+
     if customer_id:
         clauses.append("t.customer_id = %s")
         params.append(customer_id)
@@ -444,16 +551,50 @@ async def list_transactions(
     if settlement_status:
         clauses.append("(t.client_settlement_status = %s OR t.vendor_settlement_status = %s)")
         params.extend([settlement_status, settlement_status])
+    if search:
+        clauses.append("""(
+            t.surrogate_id ILIKE %s OR
+            t.person_first_name ILIKE %s OR
+            t.person_last_name ILIKE %s OR
+            t.vendor_name ILIKE %s
+        )""")
+        search_pattern = f"%{search}%"
+        params.extend([search_pattern, search_pattern, search_pattern, search_pattern])
+
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+    # Copy params for count query (before adding limit/offset)
+    count_params = params.copy()
+
+    # Get total count (use approximate count for performance on large tables)
+    async with conn.cursor(row_factory=dict_row) as cur:
+        if not clauses:
+            # For unfiltered queries, use approximate count for speed
+            await cur.execute("""
+                SELECT reltuples::bigint AS count
+                FROM pg_class
+                WHERE relname = 'transactions'
+            """)
+            count_row = await cur.fetchone()
+            total = count_row["count"] if count_row else 0
+        else:
+            # For filtered queries, need exact count
+            count_query = f"SELECT COUNT(*) as count FROM transactions t {where}"
+            await cur.execute(count_query, count_params)
+            count_row = await cur.fetchone()
+            total = count_row["count"] if count_row else 0
+
+    # Get paginated results
     query = f"""
         SELECT t.*, c.full_name as customer_name, c.risk_level
         FROM transactions t
         LEFT JOIN customers c ON c.id = t.customer_id
         {where}
         ORDER BY t.created_at DESC
-        LIMIT %s
+        LIMIT %s OFFSET %s
     """
-    params.append(limit)
+    params.extend([limit, offset])
+
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute(query, params)
         rows = await cur.fetchall()
@@ -462,23 +603,26 @@ async def list_transactions(
     serialized_rows = []
     for row in rows:
         data = dict(row)
-        # Convert UUID to string
         if "customer_id" in data and data["customer_id"]:
             data["customer_id"] = str(data["customer_id"])
         if "id" in data and data["id"]:
             data["id"] = int(data["id"])
-        # Convert Decimal to float
         if "amount" in data and data["amount"]:
             data["amount"] = float(data["amount"])
         if "original_transaction_amount" in data and data["original_transaction_amount"]:
             data["original_transaction_amount"] = float(data["original_transaction_amount"])
-        # Convert datetime to ISO string
         if "created_at" in data and data["created_at"]:
             data["created_at"] = data["created_at"].isoformat()
         serialized_rows.append(data)
 
     return JSONResponse(
-        content=serialized_rows,
+        content={
+            "transactions": serialized_rows,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + len(serialized_rows) < total,
+        },
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",

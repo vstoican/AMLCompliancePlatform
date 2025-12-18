@@ -58,6 +58,25 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  transaction-consumer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://aml_user:aml_pass@timescaledb:5432/aml
+      - NATS_URL=nats://nats:4222
+    command: ["python", "-m", "src.workers.transaction_consumer"]
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    restart: unless-stopped
+    deploy:
+      replicas: 4  # Run 4 consumers for higher throughput
+
   frontend:
     image: python:3.12-slim
     working_dir: /app
@@ -94,11 +113,14 @@ services:
       - "5434:5432"
     volumes:
       - timescaledb-data:/var/lib/postgresql/data
+      - ./db/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U aml_user -d aml"]
       interval: 10s
       timeout: 5s
       retries: 5
+    shm_size: 512mb  # Increased shared memory for shared_buffers
     restart: unless-stopped
 
   flyway:

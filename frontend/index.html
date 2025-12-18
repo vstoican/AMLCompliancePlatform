@@ -6,6 +6,7 @@
   <title>AML Control Center</title>
   <link rel="stylesheet" href="./styles.css" />
   <link rel="icon" href="data:," />
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
   <!-- Toast Container -->
@@ -23,7 +24,7 @@
       <nav class="nav accordion">
         <!-- Dashboard - Always visible at top -->
         <button class="nav-item active" data-target="overview" style="margin-bottom: 8px; font-weight: 600;">
-          <span style="margin-right: 8px;">📊</span> Dashboard
+          <img src="./dashboard-icon.png" alt="" style="width: 20px; height: 20px; margin-right: 8px; vertical-align: middle;"> Dashboard
         </button>
 
         <div class="accordion-item open">
@@ -65,11 +66,13 @@
         </div>
 
       </nav>
-      <div class="nav-footer" style="flex-direction: column; gap: 4px;">
-        <button class="nav-item" data-target="ai-assistant" style="width: 100%; display: flex; align-items: center; gap: 8px; justify-content: flex-start; padding: 10px 12px;">
-          <img src="ai-assistant-logo.png" alt="AI" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover;">
-          <span>AI Assistant</span>
+      <div style="padding: 12px 12px 0 12px;">
+        <button class="nav-item ai-assistant-btn" data-target="ai-assistant" style="width: 100%; display: flex; flex-direction: column; align-items: center; gap: 6px; justify-content: center; padding: 12px;">
+          <img src="ai-assistant-logo.png" alt="AI" style="width: 56px; height: 56px; border-radius: 50%; object-fit: cover; box-shadow: 0 2px 8px rgba(0,0,0,0.15);">
+          <span style="font-size: 12px; font-weight: 500;">AI Assistant</span>
         </button>
+      </div>
+      <div class="nav-footer">
         <div style="display: flex; width: 100%;">
           <button class="btn ghost" id="settingsBtn" style="flex: 1; display: flex; align-items: center; gap: 8px; justify-content: flex-start;">
             <span style="font-size: 18px;">⚙️</span>
@@ -237,25 +240,21 @@
           </div>
         </div>
 
-        <!-- Contextual Search & Filters -->
+        <!-- Contextual Search & Filters (server-side) -->
         <div class="panel-filters" style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center;">
-          <input id="transactionSearch" type="search" placeholder="Search by ID, person name, vendor..." style="flex: 1; min-width: 200px;" />
-          <select id="transactionFinancialFilter">
+          <input id="transactionSearch" type="search" placeholder="Search by ID, person name, vendor..." style="flex: 1; min-width: 200px;" oninput="handleTransactionSearch()" />
+          <select id="transactionFinancialFilter" onchange="handleTransactionFilterChange()">
             <option value="">All Financial Status</option>
             <option value="PENDING">Pending</option>
             <option value="COMPLETED">Completed</option>
             <option value="FAILED">Failed</option>
           </select>
-          <select id="transactionSettlementFilter">
+          <select id="transactionSettlementFilter" onchange="handleTransactionFilterChange()">
             <option value="">All Settlements</option>
             <option value="paid">Paid</option>
             <option value="unpaid">Unpaid</option>
           </select>
-          <select id="transactionDeliveryFilter">
-            <option value="">All Delivery</option>
-            <option value="PENDING">Pending</option>
-            <option value="DELIVERED">Delivered</option>
-          </select>
+          <button class="btn ghost" onclick="loadTransactions()" title="Refresh">↻ Refresh</button>
         </div>
 
         <div id="transactionTable" class="table"></div>
@@ -1372,7 +1371,7 @@
             <h2>Users</h2>
             <p class="muted">Manage system users and access controls</p>
           </div>
-          <button class="btn primary">New User</button>
+          <button class="btn primary" onclick="showEditUserModal()">New User</button>
         </div>
         <div class="card">
           <table>
@@ -1382,67 +1381,48 @@
                 <th>Email</th>
                 <th>Role</th>
                 <th>Status</th>
-                <th>Last Login</th>
                 <th>Actions</th>
               </tr>
             </thead>
-            <tbody>
-              <tr>
-                <td>Alexandru Popescu</td>
-                <td>alex.popescu@trustrelay.com</td>
-                <td><span class="badge purple">Admin</span></td>
-                <td><span class="badge teal">Active</span></td>
-                <td>2024-12-01 14:32</td>
-                <td>
-                  <div style="display: flex; gap: 6px;">
-                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Edit</button>
-                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Disable</button>
-                  </div>
-                </td>
-              </tr>
-              <tr>
-                <td>Maria Ionescu</td>
-                <td>maria.ionescu@trustrelay.com</td>
-                <td><span class="badge teal">Analyst</span></td>
-                <td><span class="badge teal">Active</span></td>
-                <td>2024-12-01 10:15</td>
-                <td>
-                  <div style="display: flex; gap: 6px;">
-                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Edit</button>
-                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Disable</button>
-                  </div>
-                </td>
-              </tr>
-              <tr>
-                <td>Andrei Stoica</td>
-                <td>andrei.stoica@trustrelay.com</td>
-                <td><span class="badge amber">Manager</span></td>
-                <td><span class="badge teal">Active</span></td>
-                <td>2024-11-30 18:45</td>
-                <td>
-                  <div style="display: flex; gap: 6px;">
-                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Edit</button>
-                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Disable</button>
-                  </div>
-                </td>
-              </tr>
-              <tr>
-                <td>Elena Dumitrescu</td>
-                <td>elena.dumitrescu@trustrelay.com</td>
-                <td><span class="badge teal">Analyst</span></td>
-                <td><span class="badge red">Disabled</span></td>
-                <td>2024-11-15 09:22</td>
-                <td>
-                  <div style="display: flex; gap: 6px;">
-                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;">Edit</button>
-                    <button class="btn ghost" style="padding: 6px 10px; font-size: 13px; color: var(--primary);">Enable</button>
-                  </div>
-                </td>
-              </tr>
+            <tbody id="usersTableBody">
+              <!-- Populated by JavaScript -->
             </tbody>
           </table>
         </div>
       </section>
+
+      <!-- Edit User Modal -->
+      <div id="editUserModal" class="modal hidden">
+        <div class="modal-content" style="max-width: 450px;">
+          <div style="padding: 20px;">
+            <h3 id="editUserModalTitle" style="margin-top: 0;">Edit User</h3>
+            <input type="hidden" id="editUserId">
+            <div style="display: grid; gap: 16px;">
+              <div>
+                <label class="label">Full Name</label>
+                <input type="text" id="editUserName" class="input" style="width: 100%;" placeholder="Enter full name">
+              </div>
+              <div>
+                <label class="label">Email</label>
+                <input type="email" id="editUserEmail" class="input" style="width: 100%;" placeholder="Enter email">
+              </div>
+              <div>
+                <label class="label">Role</label>
+                <select id="editUserRole" class="input" style="width: 100%;">
+                  <option value="analyst">Analyst</option>
+                  <option value="senior_analyst">Senior Analyst</option>
+                  <option value="manager">Manager</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+            </div>
+            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px;">
+              <button class="btn ghost" onclick="toggleEditUserModal(false)">Cancel</button>
+              <button class="btn primary" onclick="saveUser()">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <section id="roles" class="panel">
         <div class="panel-head">

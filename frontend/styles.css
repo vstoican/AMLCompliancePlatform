@@ -283,9 +283,9 @@ input[type="range"]::-moz-range-thumb {
   display: flex;
   gap: 6px;
   flex-shrink: 0;
-  padding-top: 16px;
+  padding-top: 8px;
   border-top: 1px solid var(--border);
-  margin-top: 16px;
+  margin-top: 0;
 }
 .pill {
   padding: 6px 10px;
@@ -1559,6 +1559,48 @@ table.clickable-rows tbody tr.selected {
 
 .ai-message-content p:last-child {
   margin-bottom: 0;
+}
+
+.ai-message-content ul,
+.ai-message-content ol {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.ai-message-content li {
+  margin: 4px 0;
+}
+
+.ai-message-content strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ai-message-content h1,
+.ai-message-content h2,
+.ai-message-content h3,
+.ai-message-content h4 {
+  margin: 12px 0 8px 0;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ai-message-content h1 { font-size: 1.3em; }
+.ai-message-content h2 { font-size: 1.2em; }
+.ai-message-content h3 { font-size: 1.1em; }
+.ai-message-content h4 { font-size: 1em; }
+
+.ai-message-content blockquote {
+  border-left: 3px solid var(--primary);
+  padding-left: 12px;
+  margin: 8px 0;
+  color: var(--muted);
+}
+
+.ai-message-content hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 12px 0;
 }
 
 .ai-message-content pre {

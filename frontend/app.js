@@ -51,6 +51,14 @@ const state = {
   },
   // Selected customer for detail view
   selectedCustomerId: null,
+  // Transaction pagination
+  transactionPagination: {
+    total: 0,
+    limit: 50,
+    offset: 0,
+    hasMore: false,
+    loading: false,
+  },
 };
 
 // Current user (in production, get from auth)
@@ -646,6 +654,12 @@ window.viewCustomer = viewCustomer;
 window.editCustomer = editCustomer;
 window.viewCustomerDetails = viewCustomerDetails;
 window.sortTransactions = sortTransactions;
+window.goToTransactionPage = goToTransactionPage;
+window.changeTransactionPageSize = changeTransactionPageSize;
+window.handleTransactionSearch = handleTransactionSearch;
+window.handleTransactionFilterChange = handleTransactionFilterChange;
+window.loadMoreTransactions = loadMoreTransactions;
+window.loadTransactions = loadTransactions;
 
 function toggleAlertDefModal(show) {
   alertDefModal.classList.toggle("hidden", !show);
@@ -827,11 +841,98 @@ async function loadCustomers() {
   renderOverview();
 }
 
-async function loadTransactions() {
-  const data = await fetchJSON(`/transactions?limit=120`);
-  state.transactions = data ?? sampleTransactions();
-  renderTransactions();
-  renderOverview();
+async function loadTransactions(options = {}) {
+  const { append = false, offset = 0 } = options;
+
+  if (state.transactionPagination.loading) return;
+  state.transactionPagination.loading = true;
+
+  // Build query params
+  const params = new URLSearchParams({
+    limit: state.transactionPagination.limit,
+    offset: offset,
+  });
+
+  // Add search filter if present
+  const searchValue = transactionSearch?.value?.trim();
+  if (searchValue) {
+    params.set('search', searchValue);
+  }
+
+  // Add status filters
+  const financialFilter = transactionFinancialFilter?.value;
+  if (financialFilter) {
+    params.set('financial_status', financialFilter);
+  }
+  const settlementFilter = transactionSettlementFilter?.value;
+  if (settlementFilter) {
+    params.set('settlement_status', settlementFilter);
+  }
+
+  try {
+    const data = await fetchJSON(`/transactions?${params}`);
+
+    if (data && data.transactions) {
+      // New paginated response format
+      if (append) {
+        state.transactions = [...state.transactions, ...data.transactions];
+      } else {
+        state.transactions = data.transactions;
+      }
+      state.transactionPagination = {
+        ...state.transactionPagination,
+        total: data.total,
+        offset: data.offset,
+        hasMore: data.has_more,
+        loading: false,
+      };
+    } else if (Array.isArray(data)) {
+      // Legacy format (array)
+      state.transactions = data;
+      state.transactionPagination.loading = false;
+    } else {
+      state.transactions = sampleTransactions();
+      state.transactionPagination.loading = false;
+    }
+
+    renderTransactions();
+    renderOverview();
+  } catch (error) {
+    console.error('Error loading transactions:', error);
+    state.transactionPagination.loading = false;
+  }
+}
+
+async function loadMoreTransactions() {
+  if (!state.transactionPagination.hasMore || state.transactionPagination.loading) return;
+  const newOffset = state.transactionPagination.offset + state.transactionPagination.limit;
+  await loadTransactions({ append: true, offset: newOffset });
+}
+
+function goToTransactionPage(page) {
+  const offset = (page - 1) * state.transactionPagination.limit;
+  loadTransactions({ offset });
+}
+
+function changeTransactionPageSize(size) {
+  state.transactionPagination.limit = parseInt(size);
+  state.transactionPagination.offset = 0;
+  loadTransactions();
+}
+
+// Debounce helper for search
+let transactionSearchTimeout = null;
+function handleTransactionSearch() {
+  clearTimeout(transactionSearchTimeout);
+  transactionSearchTimeout = setTimeout(() => {
+    state.transactionPagination.offset = 0;
+    loadTransactions();
+  }, 300);
+}
+
+function handleTransactionFilterChange() {
+  state.transactionPagination.offset = 0;
+  loadTransactions();
 }
 
 async function loadAlerts() {
@@ -860,11 +961,140 @@ async function loadTasks() {
 }
 
 async function loadUsers() {
-  const data = await fetchJSON('/users?is_active=true');
+  // Load all users (including disabled) for admin view
+  const data = await fetchJSON('/users');
   state.users = data ?? [];
   // Set current user based on email (in production, use auth)
   if (!currentUser && state.users.length > 0) {
     currentUser = state.users.find(u => u.email === CURRENT_USER_EMAIL) || state.users[0];
+  }
+  renderUsersTable();
+}
+
+function renderUsersTable() {
+  const tbody = document.getElementById('usersTableBody');
+  if (!tbody) return;
+
+  const roleBadge = (role) => {
+    const colors = { admin: 'purple', manager: 'amber', senior_analyst: 'blue', analyst: 'teal' };
+    return colors[role] || 'muted';
+  };
+
+  tbody.innerHTML = state.users.map(u => `
+    <tr>
+      <td>${u.full_name}</td>
+      <td>${u.email}</td>
+      <td><span class="badge ${roleBadge(u.role)}">${u.role.replace('_', ' ')}</span></td>
+      <td><span class="badge ${u.is_active ? 'teal' : 'red'}">${u.is_active ? 'Active' : 'Disabled'}</span></td>
+      <td>
+        <div style="display: flex; gap: 6px;">
+          <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;" onclick="showEditUserModal('${u.id}')">Edit</button>
+          <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;${u.is_active ? '' : ' color: var(--primary);'}" onclick="toggleUserStatus('${u.id}', ${!u.is_active})">${u.is_active ? 'Disable' : 'Enable'}</button>
+        </div>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function showEditUserModal(userId = null) {
+  const modal = document.getElementById('editUserModal');
+  const titleEl = document.getElementById('editUserModalTitle');
+  const idEl = document.getElementById('editUserId');
+  const nameEl = document.getElementById('editUserName');
+  const emailEl = document.getElementById('editUserEmail');
+  const roleEl = document.getElementById('editUserRole');
+
+  if (userId) {
+    // Edit existing user
+    const user = state.users.find(u => u.id === userId);
+    if (!user) return;
+    titleEl.textContent = 'Edit User';
+    idEl.value = userId;
+    nameEl.value = user.full_name;
+    emailEl.value = user.email;
+    roleEl.value = user.role;
+  } else {
+    // New user
+    titleEl.textContent = 'New User';
+    idEl.value = '';
+    nameEl.value = '';
+    emailEl.value = '';
+    roleEl.value = 'analyst';
+  }
+
+  modal.classList.remove('hidden');
+}
+
+function toggleEditUserModal(show) {
+  const modal = document.getElementById('editUserModal');
+  if (modal) {
+    modal.classList.toggle('hidden', !show);
+  }
+}
+
+async function saveUser() {
+  const idEl = document.getElementById('editUserId');
+  const nameEl = document.getElementById('editUserName');
+  const emailEl = document.getElementById('editUserEmail');
+  const roleEl = document.getElementById('editUserRole');
+
+  const userId = idEl.value;
+  const payload = {
+    full_name: nameEl.value.trim(),
+    email: emailEl.value.trim(),
+    role: roleEl.value,
+  };
+
+  if (!payload.full_name || !payload.email) {
+    showToast('error', 'Validation error', 'Name and email are required');
+    return;
+  }
+
+  try {
+    let result;
+    if (userId) {
+      // Update existing user
+      result = await fetchJSON(`/users/${userId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      });
+    } else {
+      // Create new user
+      result = await fetchJSON('/users', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    }
+
+    if (result) {
+      showToast('success', userId ? 'User updated' : 'User created', `${payload.full_name} has been saved`);
+      toggleEditUserModal(false);
+      await loadUsers();
+    }
+  } catch (error) {
+    showToast('error', 'Save failed', error.message || 'Unable to save user');
+  }
+}
+
+async function toggleUserStatus(userId, newStatus) {
+  const user = state.users.find(u => u.id === userId);
+  if (!user) return;
+
+  const action = newStatus ? 'enable' : 'disable';
+  if (!confirm(`Are you sure you want to ${action} ${user.full_name}?`)) return;
+
+  try {
+    const result = await fetchJSON(`/users/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ is_active: newStatus }),
+    });
+
+    if (result) {
+      showToast('success', `User ${action}d`, `${user.full_name} has been ${action}d`);
+      await loadUsers();
+    }
+  } catch (error) {
+    showToast('error', `${action} failed`, error.message || `Unable to ${action} user`);
   }
 }
 
@@ -1075,34 +1305,8 @@ function getSortIcon(column) {
 }
 
 function renderTransactions() {
-  // Get contextual filter values
-  const q = (transactionSearch?.value || '').toLowerCase();
-  const financialFilter = transactionFinancialFilter?.value || '';
-  const settlementFilter = transactionSettlementFilter?.value || '';
-  const deliveryFilter = transactionDeliveryFilter?.value || '';
-
-  const filteredRows = state.transactions.filter((t) => {
-    // Text search
-    const matchesSearch = !q ||
-      (t.surrogate_id && t.surrogate_id.toLowerCase().includes(q)) ||
-      (t.person_first_name && t.person_first_name.toLowerCase().includes(q)) ||
-      (t.person_last_name && t.person_last_name.toLowerCase().includes(q)) ||
-      (t.vendor_name && t.vendor_name.toLowerCase().includes(q)) ||
-      (t.customer_name && t.customer_name.toLowerCase().includes(q));
-
-    // Financial status filter
-    const matchesFinancial = !financialFilter || t.transaction_financial_status === financialFilter;
-
-    // Settlement status filter (client)
-    const matchesSettlement = !settlementFilter || t.client_settlement_status === settlementFilter;
-
-    // Delivery status filter
-    const matchesDelivery = !deliveryFilter || t.transaction_delivery_status === deliveryFilter;
-
-    return matchesSearch && matchesFinancial && matchesSettlement && matchesDelivery;
-  });
-
-  const rows = getSortedTransactions(filteredRows);
+  // Data is already filtered server-side, just sort locally for display
+  const rows = getSortedTransactions(state.transactions);
 
   // Status badge helper
   const statusBadge = (status) => {
@@ -1182,7 +1386,50 @@ function renderTransactions() {
       </tbody>
     </table>
   `;
-  document.getElementById("transactionTable").innerHTML = table;
+
+  // Pagination controls
+  const { total, limit, offset, hasMore, loading } = state.transactionPagination;
+  const currentPage = Math.floor(offset / limit) + 1;
+  const totalPages = Math.ceil(total / limit);
+  const startItem = offset + 1;
+  const endItem = Math.min(offset + rows.length, total);
+
+  const pagination = `
+    <div class="pagination" style="display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-top: 1px solid var(--border); margin-top: 8px;">
+      <div style="color: var(--muted); font-size: 13px;">
+        Showing ${rows.length > 0 ? startItem.toLocaleString() : 0} - ${endItem.toLocaleString()} of ${total.toLocaleString()} transactions
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button class="btn ghost" onclick="goToTransactionPage(1)" ${currentPage === 1 ? 'disabled' : ''} style="padding: 6px 10px;">
+          ⏮ First
+        </button>
+        <button class="btn ghost" onclick="goToTransactionPage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''} style="padding: 6px 12px;">
+          ← Prev
+        </button>
+        <span style="padding: 0 12px; font-size: 13px;">
+          Page <strong>${currentPage}</strong> of <strong>${totalPages.toLocaleString()}</strong>
+        </span>
+        <button class="btn ghost" onclick="goToTransactionPage(${currentPage + 1})" ${!hasMore ? 'disabled' : ''} style="padding: 6px 12px;">
+          Next →
+        </button>
+        <button class="btn ghost" onclick="goToTransactionPage(${totalPages})" ${currentPage === totalPages ? 'disabled' : ''} style="padding: 6px 10px;">
+          Last ⏭
+        </button>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <label style="font-size: 13px; color: var(--muted);">Per page:</label>
+        <select onchange="changeTransactionPageSize(this.value)" style="padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border);">
+          <option value="25" ${limit === 25 ? 'selected' : ''}>25</option>
+          <option value="50" ${limit === 50 ? 'selected' : ''}>50</option>
+          <option value="100" ${limit === 100 ? 'selected' : ''}>100</option>
+          <option value="200" ${limit === 200 ? 'selected' : ''}>200</option>
+        </select>
+      </div>
+    </div>
+    ${loading ? '<div style="text-align: center; padding: 8px; color: var(--muted);">Loading...</div>' : ''}
+  `;
+
+  document.getElementById("transactionTable").innerHTML = table + pagination;
   renderTransactionStats();
 }
 
@@ -1195,12 +1442,14 @@ function formatCurrency(amount) {
 }
 
 function renderTransactionStats() {
-  const total = state.transactions.length;
+  // Use total from pagination for overall count
+  const total = state.transactionPagination.total || state.transactions.length;
+  // Calculate stats from current page (note: these are page-level stats, not global)
   const pendingFinancial = state.transactions.filter(t => t.transaction_financial_status === 'PENDING').length;
   const unpaidClient = state.transactions.filter(t => t.client_settlement_status === 'unpaid').length;
   const totalVolume = state.transactions.reduce((sum, t) => sum + Number(t.amount || 0), 0);
 
-  setText("txnTotalCount", total);
+  setText("txnTotalCount", total.toLocaleString());
   setText("txnPendingFinancial", pendingFinancial);
   setText("txnUnpaidClient", unpaidClient);
   setText("txnTotalVolume", formatCurrency(totalVolume));
@@ -1469,7 +1718,7 @@ function renderTasks() {
           </div>
           <div class="task-card-actions">
             <button class="btn ghost" onclick="viewTaskDetail(${t.id})">View</button>
-            ${t.status === 'pending' && !t.claimed_by_id && !t.assigned_to ? `<button class="btn primary" onclick="claimTask(${t.id})">Claim</button>` : ''}
+            ${t.status === 'pending' && !t.claimed_by_id && !t.assigned_to ? `<button class="btn primary" onclick="showAssignTaskModal(${t.id})">Assign</button>` : ''}
             ${t.status === 'in_progress' && isMyTask(t) ? `
               <button class="btn ghost" onclick="releaseTask(${t.id})">Release</button>
               <button class="btn primary" onclick="completeTaskPrompt(${t.id})">Complete</button>
@@ -4402,9 +4651,31 @@ async function completeTaskPrompt(taskId) {
 // Task Notes Functions
 // ===========================================
 
-async function addTaskNote(taskId) {
-  const content = prompt('Enter note:');
-  if (!content) return;
+function toggleNoteForm(show) {
+  const formContainer = document.getElementById('noteFormContainer');
+  const addBtn = document.getElementById('addNoteBtn');
+  const textarea = document.getElementById('noteTextarea');
+
+  if (formContainer) {
+    formContainer.style.display = show ? 'block' : 'none';
+    if (show && textarea) {
+      textarea.value = '';
+      textarea.focus();
+    }
+  }
+  if (addBtn) {
+    addBtn.style.display = show ? 'none' : 'inline-flex';
+  }
+}
+
+async function submitTaskNote(taskId) {
+  const textarea = document.getElementById('noteTextarea');
+  const content = textarea ? textarea.value.trim() : '';
+
+  if (!content) {
+    showToast('error', 'Empty note', 'Please enter a note');
+    return;
+  }
 
   if (!currentUser) {
     showToast('error', 'Not logged in', 'Cannot add note without a user session');
@@ -4443,10 +4714,10 @@ async function uploadTaskAttachment(taskId, file) {
 
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('user_id', currentUser.id);
 
   try {
-    const response = await fetch(`${API_BASE}/tasks/${taskId}/attachments`, {
+    // user_id must be passed as query parameter, not in FormData
+    const response = await fetch(`${API_BASE}/tasks/${taskId}/attachments?user_id=${currentUser.id}`, {
       method: 'POST',
       body: formData,
     });
@@ -4461,6 +4732,10 @@ async function uploadTaskAttachment(taskId, file) {
     await viewTaskDetail(taskId);
   } catch (error) {
     showToast('error', 'Upload failed', error.message || 'Unable to upload attachment');
+  } finally {
+    // Reset file input so same file can be uploaded again
+    const fileInput = document.getElementById('taskAttachmentInput');
+    if (fileInput) fileInput.value = '';
   }
 }
 
@@ -4495,7 +4770,13 @@ async function downloadTaskAttachment(taskId, attachmentId) {
 // ===========================================
 
 async function showAssignTaskModal(taskId) {
-  // Build user select options
+  // Ensure users are loaded
+  if (!state.users || state.users.length === 0) {
+    const users = await fetchJSON('/users');
+    state.users = users ?? [];
+  }
+
+  // Build user select options from all active users
   const userOptions = state.users
     .filter(u => u.is_active)
     .map(u => `<option value="${u.id}">${u.full_name} (${u.role})</option>`)
@@ -4823,8 +5104,17 @@ async function viewTaskDetail(taskId) {
           <div style="border-top: 1px solid var(--border-color); padding-top: 16px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
               <label class="label" style="margin: 0;">Notes</label>
-              ${isActive ? `<button class="btn ghost" onclick="addTaskNote(${task.id})">+ Add Note</button>` : ''}
+              ${isActive ? `<button class="btn ghost" id="addNoteBtn" onclick="toggleNoteForm(true)">+ Add Note</button>` : ''}
             </div>
+            ${isActive ? `
+              <div id="noteFormContainer" style="display: none; margin-bottom: 12px; padding: 12px; background: var(--bg-muted); border-radius: 8px;">
+                <textarea id="noteTextarea" placeholder="Enter your note..." style="width: 100%; min-height: 80px; padding: 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--text); resize: vertical; font-family: inherit;"></textarea>
+                <div style="display: flex; gap: 8px; margin-top: 8px; justify-content: flex-end;">
+                  <button class="btn ghost" onclick="toggleNoteForm(false)">Cancel</button>
+                  <button class="btn primary" onclick="submitTaskNote(${task.id})">Save Note</button>
+                </div>
+              </div>
+            ` : ''}
             <div id="taskNotesContainer" style="max-height: 200px; overflow-y: auto;">
               ${notesHtml}
             </div>
@@ -4856,7 +5146,7 @@ async function viewTaskDetail(taskId) {
     // Build status-specific action buttons
     let statusActions = [];
     if (task.status === 'pending' && !task.claimed_by_id && !task.assigned_to) {
-      statusActions.push(`<button class="btn primary" onclick="claimTask(${task.id})">Claim Task</button>`);
+      statusActions.push(`<button class="btn primary" onclick="showAssignTaskModal(${task.id})">Assign</button>`);
     } else if (task.status === 'in_progress' && isMyTask) {
       statusActions.push(`<button class="btn ghost" onclick="releaseTask(${task.id})">Release</button>`);
       if (!task.workflow_id) {
@@ -4864,9 +5154,9 @@ async function viewTaskDetail(taskId) {
       }
       statusActions.push(`<button class="btn primary" onclick="completeTaskPrompt(${task.id})">Complete Task</button>`);
     }
-    // Manager can assign tasks
-    if (canManage && isActive && !task.assigned_to) {
-      statusActions.push(`<button class="btn ghost" onclick="showAssignTaskModal(${task.id})">Assign</button>`);
+    // Allow reassignment of active tasks that aren't completed
+    if (isActive && task.assigned_to) {
+      statusActions.push(`<button class="btn ghost" onclick="showAssignTaskModal(${task.id})">Reassign</button>`);
     }
 
     // Build final actions with Back button on left, status actions on right
@@ -5007,6 +5297,19 @@ window.viewTaskDetail = viewTaskDetail;
 window.toggleTaskModal = toggleTaskModal;
 window.toggleTaskDetailModal = toggleTaskDetailModal;
 window.createTaskFromAlert = createTaskFromAlert;
+window.toggleNoteForm = toggleNoteForm;
+window.submitTaskNote = submitTaskNote;
+window.uploadTaskAttachment = uploadTaskAttachment;
+window.downloadTaskAttachment = downloadTaskAttachment;
+window.showAssignTaskModal = showAssignTaskModal;
+window.toggleAssignModal = toggleAssignModal;
+window.assignTask = assignTask;
+
+// User management
+window.showEditUserModal = showEditUserModal;
+window.toggleEditUserModal = toggleEditUserModal;
+window.saveUser = saveUser;
+window.toggleUserStatus = toggleUserStatus;
 
 // =============================================================================
 // AI ASSISTANT
@@ -5116,7 +5419,13 @@ function addChatMessage(role, content, sqlQuery = null, queryResults = null) {
 
   const avatar = role === 'user' ? '👤' : '<img src="ai-assistant-logo.png" alt="AI" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">';
 
-  let contentHtml = `<p>${escapeHtml(content).replace(/\n/g, '<br>')}</p>`;
+  // Use marked for markdown rendering (assistant), plain text for user
+  let contentHtml;
+  if (role === 'assistant' && typeof marked !== 'undefined') {
+    contentHtml = marked.parse(content);
+  } else {
+    contentHtml = `<p>${escapeHtml(content).replace(/\n/g, '<br>')}</p>`;
+  }
 
   // Add SQL query if present
   if (sqlQuery) {
