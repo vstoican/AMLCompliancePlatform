@@ -566,17 +566,19 @@ async def list_transactions(
     # Copy params for count query (before adding limit/offset)
     count_params = params.copy()
 
-    # Get total count (use approximate count for performance on large tables)
+    # Get total count - use TimescaleDB approximate_row_count for speed
     async with conn.cursor(row_factory=dict_row) as cur:
         if not clauses:
-            # For unfiltered queries, use approximate count for speed
-            await cur.execute("""
-                SELECT reltuples::bigint AS count
-                FROM pg_class
-                WHERE relname = 'transactions'
-            """)
-            count_row = await cur.fetchone()
-            total = count_row["count"] if count_row else 0
+            # For unfiltered queries, use TimescaleDB approximate count
+            try:
+                await cur.execute("SELECT approximate_row_count('transactions') as count")
+                count_row = await cur.fetchone()
+                total = count_row["count"] if count_row and count_row["count"] else 0
+            except Exception:
+                # Fallback to exact count if approximate fails
+                await cur.execute("SELECT COUNT(*) as count FROM transactions t")
+                count_row = await cur.fetchone()
+                total = count_row["count"] if count_row else 0
         else:
             # For filtered queries, need exact count
             count_query = f"SELECT COUNT(*) as count FROM transactions t {where}"

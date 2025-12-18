@@ -20,8 +20,13 @@ async def generate_transaction_stream(conn: AsyncConnection) -> AsyncGenerator[s
     """
     Generate SSE stream for new transactions
     Polls database every 500ms for new transactions
+    Only streams transactions created AFTER the connection is established
     """
-    last_id = 0
+    # Start from current max id - only stream NEW transactions
+    async with conn.cursor() as cur:
+        await cur.execute("SELECT COALESCE(MAX(id), 0) FROM transactions")
+        result = await cur.fetchone()
+        last_id = result[0] if result else 0
 
     try:
         while True:
@@ -81,8 +86,13 @@ async def generate_alert_stream(conn: AsyncConnection) -> AsyncGenerator[str, No
     """
     Generate SSE stream for new alerts
     Polls database every 500ms for new alerts
+    Only streams alerts created AFTER the connection is established
     """
-    last_id = 0
+    # Start from current max id - only stream NEW alerts
+    async with conn.cursor() as cur:
+        await cur.execute("SELECT COALESCE(MAX(id), 0) FROM alerts")
+        result = await cur.fetchone()
+        last_id = result[0] if result else 0
 
     try:
         while True:
