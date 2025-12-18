@@ -111,6 +111,7 @@ const alertDefModalTitle = document.getElementById("alertDefModalTitle");
 const routes = {
   '/': 'overview',
   '/overview': 'overview',
+  '/ai-assistant': 'ai-assistant',
   '/customers': 'customers',
   '/reports': 'reports',
   '/transactions': 'transactions',
@@ -751,9 +752,12 @@ function activatePanel(name, path, updateHistory = true) {
   const titles = {
     // Dashboard
     'overview': 'Dashboard',
+    // AI Assistant
+    'ai-assistant': 'AI Assistant',
     // Case Management
     'customers': 'Customers',
     'transactions': 'Transactions',
+    'tasks': 'Task Queue',
     'alert-stream': 'Alert Stream',
     // Rules & Automation
     'alert-definitions': 'Alert Definitions',
@@ -783,6 +787,20 @@ function activatePanel(name, path, updateHistory = true) {
       loadWorkflows();
     } else if (typeof window.loadWorkflows === 'function') {
       window.loadWorkflows();
+    }
+  }
+
+  // Load tasks when tasks panel is activated (stats are updated in loadTasks)
+  if (name === 'tasks') {
+    if (typeof loadTasks === 'function') {
+      loadTasks();
+    }
+  }
+
+  // Load alerts when alert stream panel is activated (stats are updated in loadAlerts)
+  if (name === 'alert-stream') {
+    if (typeof loadAlerts === 'function') {
+      loadAlerts();
     }
   }
 }
@@ -819,22 +837,26 @@ async function loadTransactions() {
 async function loadAlerts() {
   // Load all alerts, filtering is done client-side via contextual filters
   const data = await fetchJSON(`/alerts`);
-  state.alerts = data ?? sampleAlerts();
+  // API returns {alerts: [], total: N} or just an array for backwards compat
+  state.alerts = data?.alerts ?? data ?? sampleAlerts();
   renderAlerts();
   renderOverview();
+  // Update stats after loading alerts
+  if (typeof renderAlertStats === 'function') {
+    renderAlertStats();
+  }
 }
 
 async function loadTasks() {
-  const params = new URLSearchParams();
-  if (taskStatusFilter?.value) params.append("status", taskStatusFilter.value);
-  if (taskTypeFilter?.value) params.append("task_type", taskTypeFilter.value);
-  if (taskPriorityFilter?.value) params.append("priority", taskPriorityFilter.value);
-  if (taskUnclaimedOnly?.checked) params.append("unclaimed_only", "true");
-
-  const query = params.toString() ? `?${params.toString()}` : "";
-  const data = await fetchJSON(`/tasks${query}`);
+  // Always load ALL tasks (no API-level filtering) for accurate stats
+  // Client-side filtering happens in renderTasks()
+  const data = await fetchJSON(`/tasks`);
   state.tasks = data ?? [];
   renderTasks();
+  // Update stats after loading tasks
+  if (typeof renderTaskStats === 'function') {
+    renderTaskStats();
+  }
 }
 
 async function loadUsers() {
@@ -1247,31 +1269,40 @@ function renderAlerts() {
     return labels[status] || status;
   };
 
-  // Get assignment chip
+  // Get assignment chip - shows task assignee (since assignment is on tasks now)
   const getAssignmentChip = (a) => {
+    // Find linked task for this alert
+    const linkedTask = state.tasks.find(t => t.alert_id === a.id);
+
     if (a.status === 'resolved') {
       return a.resolved_by ? `<span class="chip muted">By: ${a.resolved_by}</span>` : '';
     }
-    if (a.assigned_to) {
-      const isMyAlert = currentUser && a.assigned_to === currentUser.id;
-      return `<span class="chip ${isMyAlert ? 'teal' : 'blue'}">${isMyAlert ? 'My alert' : (a.assigned_to_name || 'Assigned')}</span>`;
-    }
-    return '<span class="chip amber">Unassigned</span>';
-  };
 
-  // Get table actions based on status
-  const getTableActions = (a) => {
-    const canManage = currentUser && ['manager', 'admin'].includes(currentUser.role);
-    const actions = [];
-
-    if (a.status === 'open') {
-      actions.push(`<button class="btn primary small" onclick="assignAlertToMe(${a.id})">Claim</button>`);
-      if (canManage) {
-        actions.push(`<button class="btn ghost small" onclick="openAlertAssignModal(${a.id})">Assign</button>`);
+    if (linkedTask) {
+      const assigneeName = linkedTask.assigned_to_name || linkedTask.claimed_by_name;
+      if (assigneeName) {
+        const isMyTask = currentUser && (linkedTask.assigned_to === currentUser.id || linkedTask.claimed_by_id === currentUser.id);
+        return `<span class="chip ${isMyTask ? 'teal' : 'blue'}">${isMyTask ? 'My task' : assigneeName}</span>`;
       }
     }
 
+    return '<span class="chip amber">Unassigned</span>';
+  };
+
+  // Get table actions - simplified to show View Task
+  const getTableActions = (a) => {
+    const actions = [];
+
+    // Find linked task for this alert
+    const linkedTask = state.tasks.find(t => t.alert_id === a.id);
+
+    // Details button first
     actions.push(`<button class="btn ghost small" onclick="openAlertPanel(${a.id})">Details</button>`);
+
+    // View Task button if task exists
+    if (linkedTask) {
+      actions.push(`<button class="btn primary small" onclick="viewTaskDetail(${linkedTask.id})">View Task</button>`);
+    }
 
     return actions.join(' ');
   };
@@ -1284,7 +1315,7 @@ function renderAlerts() {
           <th>Customer</th>
           <th>Severity</th>
           <th>Status</th>
-          <th>Assigned</th>
+          <th>Task Assignee</th>
           <th>Created</th>
           <th>Actions</th>
         </tr>
@@ -1375,7 +1406,6 @@ function renderTasks() {
       pending: "amber",
       in_progress: "blue",
       completed: "teal",
-      cancelled: "purple",
     };
     return map[s] || "muted";
   };
@@ -1395,8 +1425,8 @@ function renderTasks() {
 
   // Generate assignment/claim chip based on task status
   const getAssignmentChip = (t) => {
-    // For completed/cancelled tasks, show who completed it
-    if (t.status === 'completed' || t.status === 'cancelled') {
+    // For completed tasks, show who completed it
+    if (t.status === 'completed') {
       if (t.claimed_by_name) {
         return `<span class="chip muted">By: ${t.claimed_by_name}</span>`;
       }
@@ -1424,7 +1454,7 @@ function renderTasks() {
             <div class="task-badges">
               <span class="badge ${priorityBadge(t.priority)}">${t.priority}</span>
               <span class="badge ${statusBadge(t.status)}">${t.status}</span>
-              ${t.workflow_status && t.status !== 'completed' && t.status !== 'cancelled' ? `<span class="badge blue">${t.workflow_status}</span>` : ''}
+              ${t.workflow_status && t.status !== 'completed' ? `<span class="badge blue">${t.workflow_status}</span>` : ''}
             </div>
           </div>
           <div class="task-card-body">
@@ -1445,7 +1475,6 @@ function renderTasks() {
               <button class="btn primary" onclick="completeTaskPrompt(${t.id})">Complete</button>
               ${!t.workflow_id ? `<button class="btn ghost" onclick="startTaskWorkflow(${t.id})">Start Workflow</button>` : ''}
             ` : ''}
-            ${t.status === 'pending' || (t.status === 'in_progress' && isMyTask(t)) ? `<button class="btn ghost red" onclick="cancelTask(${t.id})">Cancel</button>` : ''}
           </div>
         </div>
       `
@@ -1556,25 +1585,149 @@ async function openAlertPanel(alertId) {
   const selectedRow = document.querySelector(`.alert-row[data-alert-id="${alertId}"]`);
   if (selectedRow) selectedRow.classList.add('selected');
 
-  // Fetch full alert details
+  // Fetch alert and find linked task
   try {
-    const [alert, notesRes, historyRes, attachmentsRes] = await Promise.all([
-      fetchJSON(`/alerts/${alertId}`),
-      fetchJSON(`/alerts/${alertId}/notes`),
-      fetchJSON(`/alerts/${alertId}/history`),
-      fetchJSON(`/alerts/${alertId}/attachments`),
-    ]);
-
+    const alert = await fetchJSON(`/alerts/${alertId}`);
     if (!alert) throw new Error('Alert not found');
 
-    const notes = notesRes?.notes || [];
-    const history = historyRes?.history || [];
-    const attachments = attachmentsRes?.attachments || [];
+    // Find linked task from state.tasks (alert_id matches)
+    const linkedTask = state.tasks.find(t => t.alert_id === alertId);
 
-    renderAlertPanelContent(alert, notes, history, attachments);
+    renderSimplifiedAlertPanel(alert, linkedTask);
   } catch (error) {
     document.getElementById('panelContent').innerHTML = `<div style="padding: 24px; color: var(--red);">Error loading alert: ${error.message}</div>`;
   }
+}
+
+// Simplified alert panel - shows detection details + link to task
+function renderSimplifiedAlertPanel(alert, linkedTask) {
+  const content = document.getElementById('panelContent');
+  const actions = document.getElementById('panelActions');
+  const title = document.getElementById('panelTitle');
+
+  if (title) title.textContent = `Alert #${alert.id}`;
+
+  // Status badge helper
+  const statusBadge = {
+    'open': 'amber',
+    'resolved': 'teal',
+  };
+
+  // Format alert details (amount, transaction type, etc.)
+  const formatDetails = (details) => {
+    if (!details) return '';
+    const items = [];
+    if (details.amount) items.push(`<div class="panel-row"><span class="label">Amount</span><span>${details.amount.toLocaleString()} ${details.currency || 'EUR'}</span></div>`);
+    if (details.transaction_type) items.push(`<div class="panel-row"><span class="label">Transaction Type</span><span>${details.transaction_type}</span></div>`);
+    if (details.risk_score) items.push(`<div class="panel-row"><span class="label">Risk Score</span><span>${details.risk_score}</span></div>`);
+    return items.join('');
+  };
+
+  // Task status display
+  const taskStatusBadge = (status) => {
+    const map = { pending: 'amber', in_progress: 'blue', completed: 'teal' };
+    return map[status] || 'muted';
+  };
+
+  const html = `
+    <div class="simplified-alert-panel">
+      <!-- Detection Summary -->
+      <div class="panel-section">
+        <h4 style="margin-top: 0; color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">Detection Details</h4>
+        <div class="panel-row">
+          <span class="label">Scenario</span>
+          <span style="font-weight: 500;">${alert.scenario?.replace(/_/g, ' ') || '-'}</span>
+        </div>
+        <div class="panel-row">
+          <span class="label">Severity</span>
+          <span class="badge ${severityBadge(alert.severity)}">${alert.severity}</span>
+        </div>
+        <div class="panel-row">
+          <span class="label">Status</span>
+          <span class="badge ${statusBadge[alert.status] || 'muted'}">${alert.status}</span>
+        </div>
+        ${alert.customer_name ? `
+          <div class="panel-row">
+            <span class="label">Customer</span>
+            <span><a href="#" onclick="viewCustomerDetails('${alert.customer_id}')">${alert.customer_name}</a></span>
+          </div>
+        ` : ''}
+        <div class="panel-row">
+          <span class="label">Detected</span>
+          <span>${new Date(alert.created_at).toLocaleString()}</span>
+        </div>
+        ${formatDetails(alert.details)}
+      </div>
+
+      <!-- Linked Task Card -->
+      <div class="panel-section">
+        <h4 style="margin-top: 0; color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">Investigation Task</h4>
+        ${linkedTask ? `
+          <div class="task-link-card" style="background: var(--bg-muted); border-radius: 8px; padding: 16px; border-left: 4px solid var(--teal); cursor: pointer;" onclick="viewTaskDetail(${linkedTask.id})">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+              <div>
+                <div style="font-weight: 600; margin-bottom: 4px;">Task #${linkedTask.id}</div>
+                <div style="font-size: 13px; color: var(--text-muted);">${linkedTask.title || linkedTask.task_type?.replace(/_/g, ' ')}</div>
+              </div>
+              <span class="badge ${taskStatusBadge(linkedTask.status)}">${linkedTask.status}</span>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; font-size: 13px;">
+              <div>
+                <span class="label" style="display: block; margin-bottom: 2px;">Assigned To</span>
+                <span style="font-weight: 500;">${linkedTask.assigned_to_name || linkedTask.claimed_by_name || 'Unassigned'}</span>
+              </div>
+              <div>
+                <span class="label" style="display: block; margin-bottom: 2px;">Priority</span>
+                <span class="badge ${linkedTask.priority === 'critical' ? 'red' : linkedTask.priority === 'high' ? 'amber' : 'muted'}">${linkedTask.priority || 'medium'}</span>
+              </div>
+            </div>
+            <div style="margin-top: 12px; text-align: center;">
+              <span style="color: var(--teal); font-weight: 500;">Click to view investigation details →</span>
+            </div>
+          </div>
+        ` : `
+          <div style="background: var(--bg-muted); border-radius: 8px; padding: 16px; text-align: center; color: var(--text-muted);">
+            <p style="margin: 0;">No task linked to this alert</p>
+            <p style="margin: 8px 0 0 0; font-size: 12px;">Tasks are auto-created based on alert definitions</p>
+          </div>
+        `}
+      </div>
+
+      ${alert.status === 'resolved' ? `
+        <div class="panel-section">
+          <h4 style="margin-top: 0; color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">Resolution</h4>
+          <div class="panel-row">
+            <span class="label">Resolution Type</span>
+            <span>${alert.resolution_type?.replace(/_/g, ' ') || '-'}</span>
+          </div>
+          ${alert.resolution_notes ? `
+            <div class="panel-row">
+              <span class="label">Notes</span>
+              <span>${alert.resolution_notes}</span>
+            </div>
+          ` : ''}
+          <div class="panel-row">
+            <span class="label">Resolved At</span>
+            <span>${alert.resolved_at ? new Date(alert.resolved_at).toLocaleString() : '-'}</span>
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  content.innerHTML = html;
+
+  // Simplified actions - just Back button and View Task (if linked)
+  const actionsHtml = `
+    <div style="display: flex; justify-content: space-between; width: 100%;">
+      <button class="btn ghost" onclick="closeDetailPanel()">Back</button>
+      ${linkedTask ? `
+        <button class="btn primary" onclick="viewTaskDetail(${linkedTask.id})">View Investigation Task</button>
+      ` : ''}
+    </div>
+  `;
+
+  actions.innerHTML = actionsHtml;
 }
 
 function closeDetailPanel() {
@@ -1624,27 +1777,14 @@ function renderAlertPanelContent(alert, notes, history, attachments = []) {
   const content = document.getElementById('panelContent');
   const actions = document.getElementById('panelActions');
   const title = document.getElementById('panelTitle');
-  const header = document.querySelector('.slide-panel .panel-header');
 
   // Store current data for edit mode
   currentPanelAlert = alert;
   currentPanelNotes = notes;
   currentPanelAttachments = attachments;
 
-  // Update header with edit button
-  if (header && alert.status !== 'resolved') {
-    header.innerHTML = `
-      <h2 id="panelTitle">Alert #${alert.id}</h2>
-      <div style="display: flex; gap: 8px; align-items: center;">
-        <button class="btn ghost small" onclick="toggleAlertEditMode()" id="panelEditBtn">
-          ${panelEditMode ? 'Cancel' : 'Edit'}
-        </button>
-        <button class="close-btn" onclick="closeDetailPanel()">&times;</button>
-      </div>
-    `;
-  } else if (title) {
-    title.textContent = `Alert #${alert.id}`;
-  }
+  // Update title
+  if (title) title.textContent = `Alert #${alert.id}`;
 
   // Status badge helper
   const getStatusBadge = (status) => {
@@ -1886,66 +2026,89 @@ function formatAlertDetails(details) {
 }
 
 function getAlertPanelActions(alert) {
-  // In edit mode, show Save button
-  if (panelEditMode) {
-    return `<button class="btn primary" onclick="saveAlertEdits(${alert.id})">Save Changes</button>`;
-  }
-
   const isMyAlert = currentUser && alert.assigned_to === currentUser.id;
   const canManage = currentUser && ['manager', 'admin'].includes(currentUser.role);
-  const actions = [];
+
+  // In edit mode, show Save and Cancel buttons
+  if (panelEditMode) {
+    return `
+      <div style="display: flex; justify-content: space-between; width: 100%;">
+        <button class="btn ghost" onclick="closeDetailPanel()">Back</button>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn ghost" onclick="toggleAlertEditMode()">Cancel</button>
+          <button class="btn primary" onclick="saveAlertEdits(${alert.id})">Save Changes</button>
+        </div>
+      </div>
+    `;
+  }
+
+  // Build status-specific actions
+  const statusActions = [];
 
   switch (alert.status) {
     case 'open':
-      actions.push(`<button class="btn primary" onclick="assignAlertToMe(${alert.id})">Claim</button>`);
+      statusActions.push(`<button class="btn primary" onclick="assignAlertToMe(${alert.id})">Claim</button>`);
       if (canManage) {
-        actions.push(`<button class="btn ghost" onclick="openAlertAssignModal(${alert.id})">Assign to...</button>`);
+        statusActions.push(`<button class="btn ghost" onclick="openAlertAssignModal(${alert.id})">Assign to...</button>`);
       }
       break;
 
     case 'assigned':
       if (isMyAlert) {
-        actions.push(`<button class="btn primary" onclick="startAlertWork(${alert.id})">Start Work</button>`);
-        actions.push(`<button class="btn ghost" onclick="unassignAlert(${alert.id})">Unassign</button>`);
+        statusActions.push(`<button class="btn primary" onclick="startAlertWork(${alert.id})">Start Work</button>`);
+        statusActions.push(`<button class="btn ghost" onclick="unassignAlert(${alert.id})">Unassign</button>`);
       }
       if (canManage && !isMyAlert) {
-        actions.push(`<button class="btn ghost" onclick="openAlertAssignModal(${alert.id})">Reassign</button>`);
+        statusActions.push(`<button class="btn ghost" onclick="openAlertAssignModal(${alert.id})">Reassign</button>`);
       }
       break;
 
     case 'in_progress':
       if (isMyAlert) {
-        actions.push(`<button class="btn primary" onclick="openAlertResolveModal(${alert.id})">Resolve</button>`);
-        actions.push(`<button class="btn ghost" onclick="openAlertEscalateModal(${alert.id})">Escalate</button>`);
-        actions.push(`<button class="btn ghost" onclick="openAlertHoldModal(${alert.id})">Put on Hold</button>`);
+        statusActions.push(`<button class="btn primary" onclick="openAlertResolveModal(${alert.id})">Resolve</button>`);
+        statusActions.push(`<button class="btn ghost" onclick="openAlertEscalateModal(${alert.id})">Escalate</button>`);
+        statusActions.push(`<button class="btn ghost" onclick="openAlertHoldModal(${alert.id})">Put on Hold</button>`);
       }
       break;
 
     case 'escalated':
       if (isMyAlert) {
-        actions.push(`<button class="btn primary" onclick="resumeAlert(${alert.id})">Resume</button>`);
+        statusActions.push(`<button class="btn primary" onclick="resumeAlert(${alert.id})">Resume</button>`);
       }
       if (canManage) {
-        actions.push(`<button class="btn primary" onclick="openAlertResolveModal(${alert.id})">Resolve</button>`);
-        actions.push(`<button class="btn ghost" onclick="openAlertAssignModal(${alert.id})">Reassign</button>`);
+        statusActions.push(`<button class="btn primary" onclick="openAlertResolveModal(${alert.id})">Resolve</button>`);
+        statusActions.push(`<button class="btn ghost" onclick="openAlertAssignModal(${alert.id})">Reassign</button>`);
       }
       break;
 
     case 'on_hold':
       if (isMyAlert) {
-        actions.push(`<button class="btn primary" onclick="resumeAlert(${alert.id})">Resume</button>`);
-        actions.push(`<button class="btn ghost" onclick="openAlertResolveModal(${alert.id})">Resolve</button>`);
+        statusActions.push(`<button class="btn primary" onclick="resumeAlert(${alert.id})">Resume</button>`);
+        statusActions.push(`<button class="btn ghost" onclick="openAlertResolveModal(${alert.id})">Resolve</button>`);
       }
       break;
 
     case 'resolved':
       if (canManage) {
-        actions.push(`<button class="btn ghost" onclick="reopenAlert(${alert.id})">Reopen</button>`);
+        statusActions.push(`<button class="btn ghost" onclick="reopenAlert(${alert.id})">Reopen</button>`);
       }
       break;
   }
 
-  return actions.join(' ');
+  // Edit button only for non-resolved alerts
+  const editBtn = alert.status !== 'resolved'
+    ? `<button class="btn ghost" onclick="toggleAlertEditMode()">Edit</button>`
+    : '';
+
+  return `
+    <div style="display: flex; justify-content: space-between; width: 100%;">
+      <button class="btn ghost" onclick="closeDetailPanel()">Back</button>
+      <div style="display: flex; gap: 8px;">
+        ${editBtn}
+        ${statusActions.join(' ')}
+      </div>
+    </div>
+  `;
 }
 
 // Alert lifecycle API calls
@@ -3078,6 +3241,10 @@ loadAll().then(() => {
   createLiveIndicator();
   startTransactionStream();
   startAlertStream();
+
+  // Ensure stats are computed after all data is loaded
+  if (typeof renderTaskStats === 'function') renderTaskStats();
+  if (typeof renderAlertStats === 'function') renderAlertStats();
 });
 
 // ========================================
@@ -4231,29 +4398,6 @@ async function completeTaskPrompt(taskId) {
   }
 }
 
-async function cancelTask(taskId) {
-  const reason = prompt('Enter cancellation reason (optional):');
-  if (reason === null) return; // User cancelled
-
-  try {
-    const result = await fetchJSON(`/tasks/${taskId}/cancel`, {
-      method: 'POST',
-      body: JSON.stringify({
-        cancelled_by_id: currentUser?.id || null,
-        cancelled_by: currentUser?.full_name || CURRENT_USER_EMAIL,
-        reason: reason || null,
-      }),
-    });
-    if (result) {
-      showToast('info', 'Task cancelled', 'Task has been cancelled');
-      await loadTasks();
-      closeDetailPanel();
-    }
-  } catch (error) {
-    showToast('error', 'Cancel failed', error.message || 'Unable to cancel task');
-  }
-}
-
 // ===========================================
 // Task Notes Functions
 // ===========================================
@@ -4471,18 +4615,19 @@ async function viewTaskDetail(taskId) {
   overlay.classList.remove('hidden');
 
   try {
-    // Load task, notes, and attachments in parallel
-    const [task, notes, attachments] = await Promise.all([
+    // Load task, notes, attachments, and history in parallel
+    const [task, notes, attachments, history] = await Promise.all([
       fetchJSON(`/tasks/${taskId}`),
       fetchJSON(`/tasks/${taskId}/notes`),
       fetchJSON(`/tasks/${taskId}/attachments`),
+      fetchJSON(`/tasks/${taskId}/history`),
     ]);
     if (!task) throw new Error('Task not found');
 
     state.selectedTask = task;
 
     const statusBadge = (s) => {
-      const map = { pending: 'amber', in_progress: 'blue', completed: 'teal', cancelled: 'purple' };
+      const map = { pending: 'amber', in_progress: 'blue', completed: 'teal' };
       return map[s] || 'muted';
     };
 
@@ -4493,7 +4638,7 @@ async function viewTaskDetail(taskId) {
 
     const isMyTask = currentUser && (task.claimed_by_id === currentUser.id || task.assigned_to === currentUser.id);
     const canManage = currentUser && ['manager', 'admin'].includes(currentUser.role);
-    const isActive = task.status !== 'completed' && task.status !== 'cancelled';
+    const isActive = task.status !== 'completed';
 
     // Assignment display
     const getAssignmentDisplay = () => {
@@ -4525,14 +4670,63 @@ async function viewTaskDetail(taskId) {
       </div>
     `).join('') || '<p style="color: var(--text-muted);">No attachments</p>';
 
+    // History section
+    const historyHtml = (history || []).map(h => {
+      const statusColor = {
+        pending: 'var(--amber)',
+        in_progress: 'var(--blue)',
+        completed: 'var(--teal)'
+      }[h.new_status] || 'var(--text-muted)';
+      return `
+        <div class="history-item" style="display: flex; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border-color);">
+          <div style="width: 8px; height: 8px; border-radius: 50%; background: ${statusColor}; margin-top: 6px; flex-shrink: 0;"></div>
+          <div style="flex: 1;">
+            <div style="font-weight: 500;">${h.new_status}${h.previous_status ? ` (from ${h.previous_status})` : ''}</div>
+            <div style="font-size: 12px; color: var(--text-muted);">
+              ${h.changed_by_name || 'System'} - ${new Date(h.created_at).toLocaleString()}
+            </div>
+            ${h.reason ? `<div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">${h.reason}</div>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('') || '<p style="color: var(--text-muted);">No history available</p>';
+
+    // Get assignee display name
+    const getAssigneeName = () => {
+      if (task.assigned_to) return task.assigned_to_name || 'Assigned User';
+      if (task.claimed_by_id) return task.claimed_by_name || task.claimed_by || 'Claimed User';
+      return null;
+    };
+
+    const assigneeName = getAssigneeName();
+
     const content = `
       <div class="task-detail">
+        <!-- Prominent Assignment Card -->
+        <div style="background: var(--bg-muted); border-radius: 8px; padding: 16px; margin-bottom: 16px; border-left: 4px solid ${assigneeName ? 'var(--teal)' : 'var(--amber)'};">
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+            <div>
+              <label class="label" style="margin-bottom: 4px;">Assigned To</label>
+              <p style="font-size: 16px; font-weight: 500; margin: 0;">${assigneeName || 'Unassigned'}</p>
+            </div>
+            <div>
+              <label class="label" style="margin-bottom: 4px;">Status</label>
+              <p style="margin: 0;"><span class="badge ${statusBadge(task.status)}">${task.status}</span></p>
+            </div>
+            <div>
+              <label class="label" style="margin-bottom: 4px;">Priority</label>
+              <p style="margin: 0;"><span class="badge ${priorityBadge(task.priority)}">${task.priority}</span></p>
+            </div>
+            <div>
+              <label class="label" style="margin-bottom: 4px;">Due Date</label>
+              <p style="margin: 0;">${task.due_date ? new Date(task.due_date).toLocaleDateString() : 'No due date'}</p>
+            </div>
+          </div>
+        </div>
+
         <div class="task-detail-header">
           <div class="badges" style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap;">
-            <span class="badge ${statusBadge(task.status)}">${task.status}</span>
-            <span class="badge ${priorityBadge(task.priority)}">${task.priority}</span>
             <span class="chip">${task.task_type.replace('_', ' ')}</span>
-            ${getAssignmentDisplay()}
             ${task.workflow_status && isActive ? `<span class="badge blue">${task.workflow_status}</span>` : ''}
           </div>
         </div>
@@ -4647,27 +4841,43 @@ async function viewTaskDetail(taskId) {
               ${attachmentsHtml}
             </div>
           </div>
+
+          <!-- History Section -->
+          <div style="border-top: 1px solid var(--border-color); padding-top: 16px;">
+            <label class="label" style="margin-bottom: 8px; display: block;">History</label>
+            <div id="taskHistoryContainer" style="max-height: 200px; overflow-y: auto;">
+              ${historyHtml}
+            </div>
+          </div>
         </div>
       </div>
     `;
 
-    let actions = '';
+    // Build status-specific action buttons
+    let statusActions = [];
     if (task.status === 'pending' && !task.claimed_by_id && !task.assigned_to) {
-      actions = `<button class="btn primary" onclick="claimTask(${task.id})">Claim Task</button>`;
+      statusActions.push(`<button class="btn primary" onclick="claimTask(${task.id})">Claim Task</button>`);
     } else if (task.status === 'in_progress' && isMyTask) {
-      actions = `
-        <button class="btn ghost" onclick="releaseTask(${task.id})">Release</button>
-        ${!task.workflow_id ? `<button class="btn ghost" onclick="startTaskWorkflow(${task.id})">Start Workflow</button>` : ''}
-        <button class="btn primary" onclick="completeTaskPrompt(${task.id})">Complete Task</button>
-      `;
+      statusActions.push(`<button class="btn ghost" onclick="releaseTask(${task.id})">Release</button>`);
+      if (!task.workflow_id) {
+        statusActions.push(`<button class="btn ghost" onclick="startTaskWorkflow(${task.id})">Start Workflow</button>`);
+      }
+      statusActions.push(`<button class="btn primary" onclick="completeTaskPrompt(${task.id})">Complete Task</button>`);
     }
     // Manager can assign tasks
     if (canManage && isActive && !task.assigned_to) {
-      actions += `<button class="btn ghost" onclick="showAssignTaskModal(${task.id})">Assign</button>`;
+      statusActions.push(`<button class="btn ghost" onclick="showAssignTaskModal(${task.id})">Assign</button>`);
     }
-    if (isActive) {
-      actions += `<button class="btn ghost red" onclick="cancelTask(${task.id})">Cancel</button>`;
-    }
+
+    // Build final actions with Back button on left, status actions on right
+    const actions = `
+      <div style="display: flex; justify-content: space-between; width: 100%;">
+        <button class="btn ghost" onclick="closeDetailPanel()">Back</button>
+        <div style="display: flex; gap: 8px;">
+          ${statusActions.join(' ')}
+        </div>
+      </div>
+    `;
 
     // Render to slide-out panel
     document.getElementById('panelTitle').textContent = `Task: ${task.title}`;
@@ -4792,9 +5002,263 @@ if (createTaskBtn) {
 window.claimTask = claimTask;
 window.releaseTask = releaseTask;
 window.completeTaskPrompt = completeTaskPrompt;
-window.cancelTask = cancelTask;
 window.startTaskWorkflow = startTaskWorkflow;
 window.viewTaskDetail = viewTaskDetail;
 window.toggleTaskModal = toggleTaskModal;
 window.toggleTaskDetailModal = toggleTaskDetailModal;
 window.createTaskFromAlert = createTaskFromAlert;
+
+// =============================================================================
+// AI ASSISTANT
+// =============================================================================
+
+let aiConversationId = null;
+let aiSettings = { provider: 'anthropic', model: 'claude-sonnet-4-20250514', api_key: null };
+
+// Load AI settings on startup
+async function loadAISettings() {
+  try {
+    const settings = await fetchJSON('/ai/settings');
+    if (settings) {
+      aiSettings = settings;
+      updateAIModelBadge();
+      // Populate settings form if on settings page
+      const providerSelect = document.getElementById('aiProvider');
+      const modelSelect = document.getElementById('aiModel');
+      if (providerSelect) providerSelect.value = settings.provider;
+      if (modelSelect) modelSelect.value = settings.model;
+    }
+  } catch (e) {
+    console.log('AI settings not available');
+  }
+}
+
+function updateAIModelBadge() {
+  const badge = document.getElementById('aiModelBadge');
+  if (badge) {
+    if (aiSettings.api_key) {
+      const modelName = aiSettings.model.split('-').slice(0, 2).join(' ');
+      badge.textContent = modelName;
+      badge.className = 'badge teal';
+    } else {
+      badge.textContent = 'Not configured';
+      badge.className = 'badge muted';
+    }
+  }
+}
+
+function openAISettings() {
+  // Navigate to settings and open AI tab
+  activatePanel('settings', '/settings');
+  setTimeout(() => {
+    const aiTab = document.querySelector('[data-tab="ai-settings"]');
+    if (aiTab) aiTab.click();
+  }, 100);
+}
+
+async function sendAIMessage() {
+  const input = document.getElementById('aiChatInput');
+  const message = input.value.trim();
+  if (!message) return;
+
+  // Check if AI is configured
+  if (!aiSettings.api_key) {
+    showToast('warning', 'AI Not Configured', 'Please configure your API key in Settings > AI Assistant');
+    openAISettings();
+    return;
+  }
+
+  // Clear input
+  input.value = '';
+
+  // Add user message to chat
+  addChatMessage('user', message);
+
+  // Show typing indicator
+  const statusIndicator = document.getElementById('aiStatusIndicator');
+  if (statusIndicator) statusIndicator.style.display = 'block';
+
+  // Hide welcome message
+  const welcomeMessage = document.querySelector('.ai-welcome-message');
+  if (welcomeMessage) welcomeMessage.style.display = 'none';
+
+  try {
+    const response = await fetchJSON('/ai/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: message,
+        conversation_id: aiConversationId,
+      }),
+    });
+
+    if (response) {
+      aiConversationId = response.conversation_id;
+
+      // Add AI response with optional SQL info
+      addChatMessage('assistant', response.response, response.sql_query, response.query_results);
+    } else {
+      addChatMessage('assistant', 'Sorry, I encountered an error processing your request. Please check your API settings and try again.');
+    }
+  } catch (error) {
+    console.error('AI chat error:', error);
+    addChatMessage('assistant', `Error: ${error.message || 'Failed to get response from AI'}`);
+  } finally {
+    if (statusIndicator) statusIndicator.style.display = 'none';
+  }
+}
+
+function addChatMessage(role, content, sqlQuery = null, queryResults = null) {
+  const chatMessages = document.getElementById('aiChatMessages');
+  if (!chatMessages) return;
+
+  const messageDiv = document.createElement('div');
+  messageDiv.className = `ai-message ${role}`;
+
+  const avatar = role === 'user' ? '👤' : '🤖';
+
+  let contentHtml = `<p>${escapeHtml(content).replace(/\n/g, '<br>')}</p>`;
+
+  // Add SQL query if present
+  if (sqlQuery) {
+    contentHtml += `
+      <details style="margin-top: 8px;">
+        <summary style="cursor: pointer; color: var(--muted); font-size: 12px;">View SQL Query</summary>
+        <div class="ai-sql-query">${escapeHtml(sqlQuery)}</div>
+      </details>
+    `;
+  }
+
+  // Add query results table if present
+  if (queryResults && queryResults.length > 0) {
+    const headers = Object.keys(queryResults[0]);
+    let tableHtml = '<table><thead><tr>';
+    headers.forEach(h => tableHtml += `<th>${escapeHtml(h)}</th>`);
+    tableHtml += '</tr></thead><tbody>';
+
+    queryResults.slice(0, 20).forEach(row => {
+      tableHtml += '<tr>';
+      headers.forEach(h => {
+        const val = row[h];
+        tableHtml += `<td>${val !== null ? escapeHtml(String(val)) : '-'}</td>`;
+      });
+      tableHtml += '</tr>';
+    });
+
+    if (queryResults.length > 20) {
+      tableHtml += `<tr><td colspan="${headers.length}" style="text-align: center; color: var(--muted);">... and ${queryResults.length - 20} more rows</td></tr>`;
+    }
+
+    tableHtml += '</tbody></table>';
+    contentHtml += `<div class="ai-sql-result">${tableHtml}</div>`;
+  }
+
+  messageDiv.innerHTML = `
+    <div class="ai-message-avatar">${avatar}</div>
+    <div class="ai-message-content">${contentHtml}</div>
+  `;
+
+  chatMessages.appendChild(messageDiv);
+  chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function handleAIChatKeydown(event) {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendAIMessage();
+  }
+}
+
+function askAISuggestion(question) {
+  const input = document.getElementById('aiChatInput');
+  if (input) {
+    input.value = question;
+    sendAIMessage();
+  }
+}
+
+function toggleApiKeyVisibility() {
+  const input = document.getElementById('aiApiKey');
+  const toggle = document.getElementById('apiKeyToggleIcon');
+  if (input && toggle) {
+    if (input.type === 'password') {
+      input.type = 'text';
+      toggle.textContent = 'Hide';
+    } else {
+      input.type = 'password';
+      toggle.textContent = 'Show';
+    }
+  }
+}
+
+async function testAIConnection() {
+  const statusEl = document.getElementById('aiConnectionStatus');
+  if (statusEl) {
+    statusEl.textContent = 'Testing...';
+    statusEl.style.color = 'var(--muted)';
+  }
+
+  try {
+    const result = await fetchJSON('/ai/test-connection', { method: 'POST' });
+    if (result && result.status === 'success') {
+      if (statusEl) {
+        statusEl.textContent = '✓ ' + result.message;
+        statusEl.style.color = 'var(--teal)';
+      }
+    } else {
+      throw new Error('Connection test failed');
+    }
+  } catch (error) {
+    if (statusEl) {
+      statusEl.textContent = '✗ ' + (error.message || 'Connection failed');
+      statusEl.style.color = 'var(--red)';
+    }
+  }
+}
+
+// AI Settings form handler
+const aiSettingsForm = document.getElementById('aiSettingsForm');
+if (aiSettingsForm) {
+  aiSettingsForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const provider = document.getElementById('aiProvider').value;
+    const model = document.getElementById('aiModel').value;
+    const apiKey = document.getElementById('aiApiKey').value;
+
+    try {
+      const result = await fetchJSON('/ai/settings', {
+        method: 'PUT',
+        body: JSON.stringify({
+          provider: provider,
+          model: model,
+          api_key: apiKey || undefined,
+        }),
+      });
+
+      if (result) {
+        aiSettings = result;
+        updateAIModelBadge();
+        showToast('success', 'Settings Saved', 'AI Assistant settings have been updated');
+      }
+    } catch (error) {
+      showToast('error', 'Save Failed', error.message || 'Failed to save AI settings');
+    }
+  });
+}
+
+// Export AI functions
+window.sendAIMessage = sendAIMessage;
+window.handleAIChatKeydown = handleAIChatKeydown;
+window.askAISuggestion = askAISuggestion;
+window.openAISettings = openAISettings;
+window.toggleApiKeyVisibility = toggleApiKeyVisibility;
+window.testAIConnection = testAIConnection;
+
+// Load AI settings on startup
+loadAISettings();

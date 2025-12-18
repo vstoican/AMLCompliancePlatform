@@ -38,6 +38,7 @@ from .streaming import router as streaming_router
 from .tasks import router as tasks_router, definition_router as task_definitions_router
 from .users import router as users_router
 from .alerts import router as alerts_router
+from .ai_assistant import router as ai_router
 
 app = FastAPI(title="AML Compliance MVP", version="0.1.0")
 
@@ -61,6 +62,9 @@ app.include_router(users_router)
 
 # Register alert lifecycle router
 app.include_router(alerts_router)
+
+# Register AI assistant router
+app.include_router(ai_router)
 
 # Global Temporal client
 temporal_client: Optional[TemporalClient] = None

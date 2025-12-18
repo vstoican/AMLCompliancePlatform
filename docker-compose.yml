@@ -17,6 +17,7 @@ services:
       - S3_SECRET_KEY=minioadmin
       - S3_BUCKET=aml-attachments
       - S3_REGION=us-east-1
+      - MCP_POSTGRES_URL=http://mcp-postgres:3100
     ports:
       - "8000:8000"
     depends_on:
@@ -28,6 +29,8 @@ services:
         condition: service_started
       minio:
         condition: service_healthy
+      mcp-postgres:
+        condition: service_started
     restart: unless-stopped
 
   worker:
@@ -65,6 +68,20 @@ services:
       - "4173:8080"
     depends_on:
       - api
+    restart: unless-stopped
+
+  mcp-postgres:
+    build:
+      context: ./mcp-server
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://aml_user:aml_pass@timescaledb:5432/aml
+      - PORT=3100
+    ports:
+      - "3100:3100"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
     restart: unless-stopped
 
   timescaledb:

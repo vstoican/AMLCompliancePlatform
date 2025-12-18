@@ -22,10 +22,10 @@ from .models import (
     TaskClaim,
     TaskComplete,
     TaskAssign,
-    TaskCancel,
     TaskNote,
     TaskNoteCreate,
     TaskAttachment,
+    TaskStatusHistory,
     TaskDefinition,
     TaskDefinitionCreate,
     TaskDefinitionUpdate,
@@ -273,7 +273,7 @@ async def claim_task(
         if task["status"] not in ("pending", "in_progress"):
             raise HTTPException(
                 status_code=400,
-                detail="Cannot claim completed or cancelled task"
+                detail="Cannot claim completed task"
             )
 
         # Claim the task
@@ -350,42 +350,6 @@ async def complete_task(
     return Task(**_serialize_task(row))
 
 
-@router.post("/{task_id}/cancel", response_model=Task)
-async def cancel_task(
-    task_id: int,
-    payload: TaskCancel,
-    conn: AsyncConnection = Depends(connection),
-) -> Task:
-    """Cancel a task"""
-    # Get cancelled_by string from user if ID provided
-    cancelled_by_str = payload.cancelled_by
-    if payload.cancelled_by_id:
-        async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT email FROM users WHERE id = %s", (str(payload.cancelled_by_id),))
-            user = await cur.fetchone()
-            if user:
-                cancelled_by_str = user["email"]
-
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute("""
-            UPDATE tasks
-            SET status = 'cancelled',
-                resolution_notes = COALESCE(%s, resolution_notes),
-                completed_by = %s,
-                completed_at = NOW()
-            WHERE id = %s AND status IN ('pending', 'in_progress')
-            RETURNING *
-        """, (payload.reason, cancelled_by_str, task_id))
-        row = await cur.fetchone()
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Task not found or already completed/cancelled"
-            )
-
-    return Task(**_serialize_task(row))
-
-
 @router.post("/{task_id}/assign", response_model=Task)
 async def assign_task(
     task_id: int,
@@ -413,8 +377,8 @@ async def assign_task(
         task = await cur.fetchone()
         if not task:
             raise HTTPException(status_code=404, detail="Task not found")
-        if task["status"] in ("completed", "cancelled"):
-            raise HTTPException(status_code=400, detail="Cannot assign completed or cancelled task")
+        if task["status"] == "completed":
+            raise HTTPException(status_code=400, detail="Cannot assign completed task")
 
         # Assign the task
         await cur.execute("""
@@ -646,6 +610,34 @@ async def delete_task_note(
         )
         if not await cur.fetchone():
             raise HTTPException(status_code=404, detail="Note not found")
+
+
+# =============================================================================
+# TASK HISTORY ENDPOINTS
+# =============================================================================
+
+@router.get("/{task_id}/history", response_model=List[TaskStatusHistory])
+async def list_task_history(
+    task_id: int,
+    conn: AsyncConnection = Depends(connection),
+) -> List[TaskStatusHistory]:
+    """List status change history for a task"""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        # Check task exists
+        await cur.execute("SELECT id FROM tasks WHERE id = %s", (task_id,))
+        if not await cur.fetchone():
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        await cur.execute("""
+            SELECT h.*, u.full_name as changed_by_name
+            FROM task_status_history h
+            LEFT JOIN users u ON u.id = h.changed_by
+            WHERE h.task_id = %s
+            ORDER BY h.created_at DESC
+        """, (task_id,))
+        rows = await cur.fetchall()
+
+    return [TaskStatusHistory(**row) for row in rows]
 
 
 # =============================================================================

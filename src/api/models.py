@@ -244,7 +244,7 @@ class AlertDefinitionUpdate(BaseModel):
 # =============================================================================
 
 TASK_TYPES = ["investigation", "kyc_refresh", "document_request", "escalation", "sar_filing"]
-TASK_STATUSES = ["pending", "in_progress", "completed", "cancelled"]
+TASK_STATUSES = ["pending", "in_progress", "completed"]
 TASK_PRIORITIES = ["low", "medium", "high", "critical"]
 
 
@@ -323,12 +323,6 @@ class TaskComplete(BaseModel):
 class TaskAssign(BaseModel):
     assigned_to: UUID
     assigned_by: UUID
-
-
-class TaskCancel(BaseModel):
-    cancelled_by_id: Optional[UUID] = None
-    cancelled_by: Optional[str] = None  # Fallback for legacy
-    reason: Optional[str] = None
 
 
 # =============================================================================
@@ -442,6 +436,22 @@ class TaskAttachment(BaseModel):
 
 
 # =============================================================================
+# TASK STATUS HISTORY MODELS
+# =============================================================================
+
+class TaskStatusHistory(BaseModel):
+    id: int
+    task_id: int
+    previous_status: Optional[str] = None
+    new_status: str
+    changed_by: Optional[UUID] = None
+    changed_by_name: Optional[str] = None  # Joined field
+    reason: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
+    created_at: datetime
+
+
+# =============================================================================
 # ALERT LIFECYCLE MODELS
 # =============================================================================
 
@@ -527,7 +537,6 @@ class AlertNote(BaseModel):
 
 
 class AlertNoteCreate(BaseModel):
-    user_id: UUID
     content: str
     note_type: str = "comment"
 
