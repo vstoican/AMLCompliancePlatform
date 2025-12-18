@@ -5114,7 +5114,7 @@ function addChatMessage(role, content, sqlQuery = null, queryResults = null) {
   const messageDiv = document.createElement('div');
   messageDiv.className = `ai-message ${role}`;
 
-  const avatar = role === 'user' ? '👤' : '🤖';
+  const avatar = role === 'user' ? '👤' : '<img src="ai-assistant-logo.png" alt="AI" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">';
 
   let contentHtml = `<p>${escapeHtml(content).replace(/\n/g, '<br>')}</p>`;
 
