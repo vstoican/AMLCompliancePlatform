@@ -439,3 +439,128 @@ class TaskAttachment(BaseModel):
     created_at: datetime
     # Joined field
     user_name: Optional[str] = None
+
+
+# =============================================================================
+# ALERT LIFECYCLE MODELS
+# =============================================================================
+
+ALERT_STATUSES = ['open', 'assigned', 'in_progress', 'escalated', 'on_hold', 'resolved']
+RESOLUTION_TYPES = ['confirmed_suspicious', 'false_positive', 'not_suspicious', 'duplicate', 'other']
+ALERT_PRIORITIES = ['low', 'medium', 'high', 'critical']
+
+
+class AlertFull(BaseModel):
+    """Full alert model with lifecycle fields"""
+    id: int
+    customer_id: Optional[UUID] = None
+    type: str
+    status: str
+    severity: str
+    scenario: Optional[str] = None
+    alert_definition_id: Optional[int] = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+    resolved_by: Optional[str] = None
+    resolution_notes: Optional[str] = None
+    # Lifecycle fields
+    assigned_to: Optional[UUID] = None
+    assigned_by: Optional[UUID] = None
+    assigned_at: Optional[datetime] = None
+    escalated_to: Optional[UUID] = None
+    escalated_by: Optional[UUID] = None
+    escalated_at: Optional[datetime] = None
+    escalation_reason: Optional[str] = None
+    resolution_type: Optional[str] = None
+    priority: str = "medium"
+    due_date: Optional[datetime] = None
+    # Joined fields
+    customer_name: Optional[str] = None
+    assigned_to_name: Optional[str] = None
+    assigned_to_email: Optional[str] = None
+    escalated_to_name: Optional[str] = None
+
+
+class AlertAssign(BaseModel):
+    """Request to assign an alert"""
+    assigned_to: UUID
+    assigned_by: Optional[UUID] = None  # None if self-assigning
+
+
+class AlertEscalate(BaseModel):
+    """Request to escalate an alert"""
+    escalated_to: UUID
+    reason: str
+
+
+class AlertResolve(BaseModel):
+    """Request to resolve an alert"""
+    resolution_type: str = Field(..., description="One of: confirmed_suspicious, false_positive, not_suspicious, duplicate, other")
+    resolution_notes: Optional[str] = None
+
+
+class AlertHold(BaseModel):
+    """Request to put an alert on hold"""
+    reason: Optional[str] = None
+
+
+class AlertReopen(BaseModel):
+    """Request to reopen an alert (manager only)"""
+    reason: Optional[str] = None
+
+
+# =============================================================================
+# ALERT NOTE MODELS
+# =============================================================================
+
+class AlertNote(BaseModel):
+    id: int
+    alert_id: int
+    user_id: Optional[UUID] = None
+    content: str
+    note_type: str = "comment"
+    created_at: datetime
+    updated_at: datetime
+    # Joined field
+    user_name: Optional[str] = None
+
+
+class AlertNoteCreate(BaseModel):
+    user_id: UUID
+    content: str
+    note_type: str = "comment"
+
+
+# =============================================================================
+# ALERT ATTACHMENT MODELS
+# =============================================================================
+
+class AlertAttachment(BaseModel):
+    id: int
+    alert_id: int
+    user_id: Optional[UUID] = None
+    filename: str
+    original_filename: str
+    file_path: str
+    file_size: int
+    content_type: str
+    created_at: datetime
+    # Joined field
+    user_name: Optional[str] = None
+
+
+# =============================================================================
+# ALERT STATUS HISTORY MODELS
+# =============================================================================
+
+class AlertStatusHistory(BaseModel):
+    id: int
+    alert_id: int
+    previous_status: Optional[str] = None
+    new_status: str
+    changed_by: Optional[UUID] = None
+    changed_by_name: Optional[str] = None
+    reason: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime

@@ -79,6 +79,9 @@ const alertStatusFilter = document.getElementById("alertStatusFilter");
 const alertSeverityFilter = document.getElementById("alertSeverityFilter");
 const alertTypeFilter = document.getElementById("alertTypeFilter");
 const alertStatusFilter2 = document.getElementById("alertStatusFilter2");
+const alertSeverityFilter2 = document.getElementById("alertSeverityFilter2");
+const alertAssignedFilter = document.getElementById("alertAssignedFilter");
+const alertStreamSearch = document.getElementById("alertStreamSearch");
 
 // Task filters
 const taskSearch = document.getElementById("taskSearch");
@@ -210,6 +213,10 @@ if (alertSearch) alertSearch.addEventListener("input", () => renderAlerts());
 if (alertStatusFilter) alertStatusFilter.addEventListener("change", () => renderAlerts());
 if (alertSeverityFilter) alertSeverityFilter.addEventListener("change", () => renderAlerts());
 if (alertTypeFilter) alertTypeFilter.addEventListener("change", () => renderAlerts());
+if (alertStatusFilter2) alertStatusFilter2.addEventListener("change", () => renderAlerts());
+if (alertSeverityFilter2) alertSeverityFilter2.addEventListener("change", () => renderAlerts());
+if (alertAssignedFilter) alertAssignedFilter.addEventListener("change", () => renderAlerts());
+if (alertStreamSearch) alertStreamSearch.addEventListener("input", () => renderAlerts());
 
 // Contextual filter event listeners - Tasks
 if (taskSearch) taskSearch.addEventListener("input", () => renderTasks());
@@ -1178,11 +1185,12 @@ function renderTransactionStats() {
 }
 
 function renderAlerts() {
-  // Get contextual filter values
-  const q = (alertSearch?.value || '').toLowerCase();
-  const statusFilter = alertStatusFilter?.value || '';
-  const severityFilter = alertSeverityFilter?.value || '';
+  // Get contextual filter values from both filter locations
+  const q = (alertSearch?.value || alertStreamSearch?.value || '').toLowerCase();
+  const statusFilter = alertStatusFilter?.value || alertStatusFilter2?.value || '';
+  const severityFilter = alertSeverityFilter?.value || alertSeverityFilter2?.value || '';
   const typeFilter = alertTypeFilter?.value || '';
+  const assignedFilter = alertAssignedFilter?.value || '';
 
   const rows = state.alerts.filter((a) => {
     // Text search
@@ -1190,7 +1198,8 @@ function renderAlerts() {
       (a.scenario && a.scenario.toLowerCase().includes(q)) ||
       (a.type && a.type.toLowerCase().includes(q)) ||
       (a.details?.definition_name && a.details.definition_name.toLowerCase().includes(q)) ||
-      (a.details?.definition_code && a.details.definition_code.toLowerCase().includes(q));
+      (a.details?.definition_code && a.details.definition_code.toLowerCase().includes(q)) ||
+      (a.customer_name && a.customer_name.toLowerCase().includes(q));
 
     // Status filter
     const matchesStatus = !statusFilter || a.status === statusFilter;
@@ -1201,24 +1210,84 @@ function renderAlerts() {
     // Type filter
     const matchesType = !typeFilter || a.type === typeFilter;
 
-    return matchesSearch && matchesStatus && matchesSeverity && matchesType;
+    // Assigned filter
+    let matchesAssigned = true;
+    if (assignedFilter === 'unassigned') {
+      matchesAssigned = !a.assigned_to;
+    } else if (assignedFilter === 'me' && currentUser) {
+      matchesAssigned = a.assigned_to === currentUser.id;
+    }
+
+    return matchesSearch && matchesStatus && matchesSeverity && matchesType && matchesAssigned;
   });
 
-  // Status badge helper
+  // Status badge helper - new 6 statuses
   const alertStatusBadge = (status) => {
     const badges = {
       'open': 'amber',
-      'investigating': 'blue',
-      'resolved': 'teal',
-      'dismissed': 'purple',
+      'assigned': 'blue',
+      'in_progress': 'teal',
+      'escalated': 'red',
+      'on_hold': 'purple',
+      'resolved': 'muted',
     };
-    return badges[status] || 'purple';
+    return badges[status] || 'muted';
+  };
+
+  // Format status for display
+  const formatStatus = (status) => {
+    const labels = {
+      'open': 'Open',
+      'assigned': 'Assigned',
+      'in_progress': 'In Progress',
+      'escalated': 'Escalated',
+      'on_hold': 'On Hold',
+      'resolved': 'Resolved',
+    };
+    return labels[status] || status;
+  };
+
+  // Get assignment chip
+  const getAssignmentChip = (a) => {
+    if (a.status === 'resolved') {
+      return a.resolved_by ? `<span class="chip muted">By: ${a.resolved_by}</span>` : '';
+    }
+    if (a.assigned_to) {
+      const isMyAlert = currentUser && a.assigned_to === currentUser.id;
+      return `<span class="chip ${isMyAlert ? 'teal' : 'blue'}">${isMyAlert ? 'My alert' : (a.assigned_to_name || 'Assigned')}</span>`;
+    }
+    return '<span class="chip amber">Unassigned</span>';
+  };
+
+  // Get table actions based on status
+  const getTableActions = (a) => {
+    const canManage = currentUser && ['manager', 'admin'].includes(currentUser.role);
+    const actions = [];
+
+    if (a.status === 'open') {
+      actions.push(`<button class="btn primary small" onclick="assignAlertToMe(${a.id})">Claim</button>`);
+      if (canManage) {
+        actions.push(`<button class="btn ghost small" onclick="openAlertAssignModal(${a.id})">Assign</button>`);
+      }
+    }
+
+    actions.push(`<button class="btn ghost small" onclick="openAlertPanel(${a.id})">Details</button>`);
+
+    return actions.join(' ');
   };
 
   const table = `
-    <table>
+    <table class="clickable-rows">
       <thead>
-        <tr><th>Scenario</th><th>Definition</th><th>Type</th><th>Severity</th><th>Status</th><th>Created</th><th>Actions</th></tr>
+        <tr>
+          <th>Scenario</th>
+          <th>Customer</th>
+          <th>Severity</th>
+          <th>Status</th>
+          <th>Assigned</th>
+          <th>Created</th>
+          <th>Actions</th>
+        </tr>
       </thead>
       <tbody>
         ${rows.length === 0 ? `
@@ -1230,18 +1299,17 @@ function renderAlerts() {
         ` : rows
           .map(
             (a) => `
-          <tr>
-            <td>${a.scenario ?? "-"}</td>
-            <td>${a.details?.definition_name ?? a.details?.definition_code ?? "-"}</td>
-            <td>${a.type ?? "-"}</td>
-            <td><span class="badge ${severityBadge(a.severity)}">${a.severity}</span></td>
-            <td><span class="badge ${alertStatusBadge(a.status)}">${a.status}</span></td>
-            <td>${new Date(a.created_at).toLocaleString()}</td>
+          <tr class="alert-row" data-alert-id="${a.id}" onclick="openAlertPanel(${a.id})">
             <td>
-              <button class="btn ghost alert-action" data-alert-id="${a.id}" data-alert-action="investigation">
-                Start investigation
-              </button>
+              <div class="cell-primary">${a.scenario ?? a.type ?? "-"}</div>
+              <div class="cell-secondary">${a.details?.definition_name ?? a.details?.definition_code ?? ""}</div>
             </td>
+            <td>${a.customer_name ?? "-"}</td>
+            <td><span class="badge ${severityBadge(a.severity)}">${a.severity}</span></td>
+            <td><span class="badge ${alertStatusBadge(a.status)}">${formatStatus(a.status)}</span></td>
+            <td>${getAssignmentChip(a)}</td>
+            <td>${new Date(a.created_at).toLocaleString()}</td>
+            <td onclick="event.stopPropagation()">${getTableActions(a)}</td>
           </tr>`
           )
           .join("")}
@@ -1253,9 +1321,33 @@ function renderAlerts() {
   if (alertTable) alertTable.innerHTML = table;
   if (alertTable2) alertTable2.innerHTML = table;
 
-  document.querySelectorAll(".alert-action").forEach((btn) => {
-    btn.addEventListener("click", handleAlertAction);
-  });
+  // Update alert stats
+  renderAlertStats();
+}
+
+function renderAlertStats() {
+  const alerts = state.alerts;
+  const openCount = alerts.filter(a => a.status === 'open').length;
+  const assignedCount = alerts.filter(a => a.status === 'assigned' || a.status === 'in_progress').length;
+  const escalatedCount = alerts.filter(a => a.status === 'escalated').length;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const resolvedTodayCount = alerts.filter(a => {
+    if (a.status !== 'resolved' || !a.resolved_at) return false;
+    const resolved = new Date(a.resolved_at);
+    return resolved >= today;
+  }).length;
+
+  const openEl = document.getElementById('alertOpenCount');
+  const assignedEl = document.getElementById('alertAssignedCount');
+  const escalatedEl = document.getElementById('alertEscalatedCount');
+  const resolvedTodayEl = document.getElementById('alertResolvedTodayCount');
+
+  if (openEl) openEl.textContent = openCount;
+  if (assignedEl) assignedEl.textContent = assignedCount;
+  if (escalatedEl) escalatedEl.textContent = escalatedCount;
+  if (resolvedTodayEl) resolvedTodayEl.textContent = resolvedTodayCount;
 }
 
 function renderTasks() {
@@ -1332,7 +1424,7 @@ function renderTasks() {
             <div class="task-badges">
               <span class="badge ${priorityBadge(t.priority)}">${t.priority}</span>
               <span class="badge ${statusBadge(t.status)}">${t.status}</span>
-              ${t.workflow_status ? `<span class="badge blue">${t.workflow_status}</span>` : ''}
+              ${t.workflow_status && t.status !== 'completed' && t.status !== 'cancelled' ? `<span class="badge blue">${t.workflow_status}</span>` : ''}
             </div>
           </div>
           <div class="task-card-body">
@@ -1436,6 +1528,1006 @@ async function updateAlertStatus(alertId, status, notes) {
     throw new Error("Update failed");
   }
 }
+
+// =============================================================================
+// ALERT LIFECYCLE FUNCTIONS
+// =============================================================================
+
+// Currently selected alert for the panel
+let selectedAlertId = null;
+
+// Open the slide-out panel with alert details
+async function openAlertPanel(alertId) {
+  selectedAlertId = alertId;
+  const panel = document.getElementById('detailPanel');
+  const overlay = document.getElementById('detailPanelOverlay');
+
+  if (!panel || !overlay) return;
+
+  // Show loading state
+  document.getElementById('panelContent').innerHTML = '<div style="padding: 24px; text-align: center;">Loading...</div>';
+  document.getElementById('panelActions').innerHTML = '';
+
+  panel.classList.remove('hidden');
+  overlay.classList.remove('hidden');
+
+  // Highlight the selected row
+  document.querySelectorAll('.alert-row').forEach(row => row.classList.remove('selected'));
+  const selectedRow = document.querySelector(`.alert-row[data-alert-id="${alertId}"]`);
+  if (selectedRow) selectedRow.classList.add('selected');
+
+  // Fetch full alert details
+  try {
+    const [alert, notesRes, historyRes, attachmentsRes] = await Promise.all([
+      fetchJSON(`/alerts/${alertId}`),
+      fetchJSON(`/alerts/${alertId}/notes`),
+      fetchJSON(`/alerts/${alertId}/history`),
+      fetchJSON(`/alerts/${alertId}/attachments`),
+    ]);
+
+    if (!alert) throw new Error('Alert not found');
+
+    const notes = notesRes?.notes || [];
+    const history = historyRes?.history || [];
+    const attachments = attachmentsRes?.attachments || [];
+
+    renderAlertPanelContent(alert, notes, history, attachments);
+  } catch (error) {
+    document.getElementById('panelContent').innerHTML = `<div style="padding: 24px; color: var(--red);">Error loading alert: ${error.message}</div>`;
+  }
+}
+
+function closeDetailPanel() {
+  const panel = document.getElementById('detailPanel');
+  const overlay = document.getElementById('detailPanelOverlay');
+
+  if (!panel || panel.classList.contains('hidden')) return;
+
+  // Add closing animation classes
+  panel.classList.add('closing');
+  overlay.classList.add('closing');
+
+  // After animation completes, hide elements
+  setTimeout(() => {
+    panel.classList.add('hidden');
+    panel.classList.remove('closing');
+    overlay.classList.add('hidden');
+    overlay.classList.remove('closing');
+
+    // Remove row highlight
+    document.querySelectorAll('.alert-row').forEach(row => row.classList.remove('selected'));
+    selectedAlertId = null;
+    state.selectedTask = null;
+
+    // Reset edit mode
+    panelEditMode = false;
+    currentPanelAlert = null;
+    currentPanelNotes = [];
+    currentPanelAttachments = [];
+  }, 250); // Match animation duration
+}
+
+// Handle Escape key to close panel
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    closeDetailPanel();
+  }
+});
+
+// Track panel edit mode
+let panelEditMode = false;
+let currentPanelAlert = null;
+let currentPanelNotes = [];
+let currentPanelAttachments = [];
+
+function renderAlertPanelContent(alert, notes, history, attachments = []) {
+  const content = document.getElementById('panelContent');
+  const actions = document.getElementById('panelActions');
+  const title = document.getElementById('panelTitle');
+  const header = document.querySelector('.slide-panel .panel-header');
+
+  // Store current data for edit mode
+  currentPanelAlert = alert;
+  currentPanelNotes = notes;
+  currentPanelAttachments = attachments;
+
+  // Update header with edit button
+  if (header && alert.status !== 'resolved') {
+    header.innerHTML = `
+      <h2 id="panelTitle">Alert #${alert.id}</h2>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button class="btn ghost small" onclick="toggleAlertEditMode()" id="panelEditBtn">
+          ${panelEditMode ? 'Cancel' : 'Edit'}
+        </button>
+        <button class="close-btn" onclick="closeDetailPanel()">&times;</button>
+      </div>
+    `;
+  } else if (title) {
+    title.textContent = `Alert #${alert.id}`;
+  }
+
+  // Status badge helper
+  const getStatusBadge = (status) => {
+    const badges = {
+      'open': 'amber',
+      'assigned': 'blue',
+      'in_progress': 'teal',
+      'escalated': 'red',
+      'on_hold': 'purple',
+      'resolved': 'muted',
+    };
+    const labels = {
+      'open': 'Open',
+      'assigned': 'Assigned',
+      'in_progress': 'In Progress',
+      'escalated': 'Escalated',
+      'on_hold': 'On Hold',
+      'resolved': 'Resolved',
+    };
+    return `<span class="badge ${badges[status] || 'muted'}">${labels[status] || status}</span>`;
+  };
+
+  // Resolution type badge
+  const getResolutionBadge = (type) => {
+    const badges = {
+      'confirmed_suspicious': 'red',
+      'false_positive': 'muted',
+      'not_suspicious': 'teal',
+      'duplicate': 'muted',
+      'other': 'muted',
+    };
+    const labels = {
+      'confirmed_suspicious': 'Confirmed Suspicious',
+      'false_positive': 'False Positive',
+      'not_suspicious': 'Not Suspicious',
+      'duplicate': 'Duplicate',
+      'other': 'Other',
+    };
+    return type ? `<span class="badge ${badges[type] || 'muted'}">${labels[type] || type}</span>` : '';
+  };
+
+  // Format due date for input
+  const formatDateForInput = (date) => {
+    if (!date) return '';
+    const d = new Date(date);
+    return d.toISOString().slice(0, 16); // Format: YYYY-MM-DDTHH:mm
+  };
+
+  // Priority row - editable or view mode
+  const priorityRow = panelEditMode ? `
+    <div class="panel-row">
+      <span class="label">Priority</span>
+      <select id="editAlertPriority" class="input" style="width: auto; min-width: 120px;">
+        <option value="low" ${alert.priority === 'low' ? 'selected' : ''}>Low</option>
+        <option value="medium" ${alert.priority === 'medium' || !alert.priority ? 'selected' : ''}>Medium</option>
+        <option value="high" ${alert.priority === 'high' ? 'selected' : ''}>High</option>
+        <option value="critical" ${alert.priority === 'critical' ? 'selected' : ''}>Critical</option>
+      </select>
+    </div>
+  ` : `
+    <div class="panel-row">
+      <span class="label">Priority</span>
+      <span class="badge ${alert.priority === 'critical' ? 'red' : alert.priority === 'high' ? 'amber' : 'muted'}">${alert.priority || 'medium'}</span>
+    </div>
+  `;
+
+  // Due date row - editable or view mode
+  const dueDateRow = panelEditMode ? `
+    <div class="panel-row">
+      <span class="label">Due Date</span>
+      <input type="datetime-local" id="editAlertDueDate" class="input" style="width: auto;" value="${formatDateForInput(alert.due_date)}">
+    </div>
+  ` : (alert.due_date ? `
+    <div class="panel-row">
+      <span class="label">Due Date</span>
+      <span>${new Date(alert.due_date).toLocaleString()}</span>
+    </div>
+  ` : '');
+
+  // Assignee row - editable or view mode
+  const assigneeRow = panelEditMode ? `
+    <div class="panel-row">
+      <span class="label">Assigned to</span>
+      <select id="editAlertAssignee" class="input" style="width: auto; min-width: 150px;">
+        <option value="">Unassigned</option>
+        ${state.users.filter(u => u.is_active).map(u => `
+          <option value="${u.id}" ${alert.assigned_to === u.id ? 'selected' : ''}>${u.full_name} (${u.role})</option>
+        `).join('')}
+      </select>
+    </div>
+  ` : (alert.assigned_to_name ? `
+    <div class="panel-row">
+      <span class="label">Assigned to</span>
+      <span>${alert.assigned_to_name}</span>
+    </div>
+  ` : '');
+
+  const html = `
+    <div class="panel-section">
+      <div class="panel-row">
+        <span class="label">Status</span>
+        <span>${getStatusBadge(alert.status)}</span>
+      </div>
+      <div class="panel-row">
+        <span class="label">Severity</span>
+        <span class="badge ${severityBadge(alert.severity)}">${alert.severity}</span>
+      </div>
+      ${priorityRow}
+      ${dueDateRow}
+      ${assigneeRow}
+      ${alert.escalated_to_name ? `
+        <div class="panel-row">
+          <span class="label">Escalated to</span>
+          <span>${alert.escalated_to_name}</span>
+        </div>
+        <div class="panel-row">
+          <span class="label">Escalation reason</span>
+          <span>${alert.escalation_reason || '-'}</span>
+        </div>
+      ` : ''}
+    </div>
+
+    <div class="panel-section">
+      <h4>Alert Details</h4>
+      <div class="panel-row">
+        <span class="label">Scenario</span>
+        <span>${alert.scenario || '-'}</span>
+      </div>
+      <div class="panel-row">
+        <span class="label">Type</span>
+        <span>${alert.type || '-'}</span>
+      </div>
+      ${alert.customer_name ? `
+        <div class="panel-row">
+          <span class="label">Customer</span>
+          <span><a href="#" onclick="viewCustomerDetails('${alert.customer_id}')">${alert.customer_name}</a></span>
+        </div>
+      ` : ''}
+      <div class="panel-row">
+        <span class="label">Created</span>
+        <span>${new Date(alert.created_at).toLocaleString()}</span>
+      </div>
+      ${alert.details ? `
+        <div class="panel-row">
+          <span class="label">Details</span>
+          <span class="details-json">${formatAlertDetails(alert.details)}</span>
+        </div>
+      ` : ''}
+    </div>
+
+    ${alert.status === 'resolved' ? `
+      <div class="panel-section">
+        <h4>Resolution</h4>
+        <div class="panel-row">
+          <span class="label">Resolution type</span>
+          <span>${getResolutionBadge(alert.resolution_type)}</span>
+        </div>
+        ${alert.resolution_notes ? `
+          <div class="panel-row">
+            <span class="label">Notes</span>
+            <span>${alert.resolution_notes}</span>
+          </div>
+        ` : ''}
+        <div class="panel-row">
+          <span class="label">Resolved at</span>
+          <span>${alert.resolved_at ? new Date(alert.resolved_at).toLocaleString() : '-'}</span>
+        </div>
+      </div>
+    ` : ''}
+
+    <div class="panel-section">
+      <h4>Notes</h4>
+      <div class="inline-note-form" style="margin-bottom: 12px;">
+        <textarea id="inlineAlertNote" class="input" placeholder="Add a note..." rows="2" style="width: 100%; resize: vertical;"></textarea>
+        <button class="btn primary small" onclick="addInlineAlertNote(${alert.id})" style="margin-top: 8px;">Add Note</button>
+      </div>
+      <div class="notes-list">
+        ${notes.length === 0 ? '<p class="muted">No notes yet</p>' : notes.map(n => `
+          <div class="note-item">
+            <div class="note-header">
+              <span class="note-author">${n.user_name || 'System'}</span>
+              <span class="note-date">${new Date(n.created_at).toLocaleString()}</span>
+            </div>
+            <div class="note-content">${n.content}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <h4>Attachments</h4>
+      <div class="inline-attachment-form" style="margin-bottom: 12px;">
+        <input type="file" id="inlineAlertAttachment" style="display: none;" onchange="uploadInlineAlertAttachment(${alert.id}, this.files[0])">
+        <button class="btn ghost small" onclick="document.getElementById('inlineAlertAttachment').click()">
+          + Upload File
+        </button>
+      </div>
+      <div class="attachments-list">
+        ${attachments.length === 0 ? '<p class="muted">No attachments</p>' : attachments.map(a => `
+          <div class="attachment-item" style="display: flex; align-items: center; gap: 8px; padding: 8px; background: var(--bg-muted); border-radius: 4px; margin: 4px 0;">
+            <span style="flex: 1;">${a.original_filename}</span>
+            <span style="font-size: 12px; color: var(--text-muted);">${(a.file_size / 1024).toFixed(1)} KB</span>
+            <button class="btn ghost small" onclick="downloadAlertAttachment(${alert.id}, ${a.id})">Download</button>
+            <button class="btn ghost small" onclick="deleteAlertAttachment(${alert.id}, ${a.id})" style="color: var(--red);">&times;</button>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="panel-section">
+      <h4>History</h4>
+      <div class="history-timeline">
+        ${history.length === 0 ? '<p class="muted">No history</p>' : history.map(h => `
+          <div class="history-item">
+            <div class="history-dot"></div>
+            <div class="history-content">
+              <span class="history-change">${h.previous_status ? `${h.previous_status} → ` : ''}${h.new_status}</span>
+              ${h.changed_by_name ? `<span class="history-by"> by ${h.changed_by_name}</span>` : ''}
+              ${h.reason ? `<div class="history-reason">${h.reason}</div>` : ''}
+              <span class="history-date">${new Date(h.created_at).toLocaleString()}</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+
+  content.innerHTML = html;
+  actions.innerHTML = getAlertPanelActions(alert);
+}
+
+function formatAlertDetails(details) {
+  if (!details) return '-';
+  const entries = Object.entries(details)
+    .filter(([k, v]) => v !== null && v !== undefined && !['definition_name', 'definition_code'].includes(k))
+    .map(([k, v]) => `<div><span class="label">${k.replace(/_/g, ' ')}:</span> ${v}</div>`)
+    .join('');
+  return entries || '-';
+}
+
+function getAlertPanelActions(alert) {
+  // In edit mode, show Save button
+  if (panelEditMode) {
+    return `<button class="btn primary" onclick="saveAlertEdits(${alert.id})">Save Changes</button>`;
+  }
+
+  const isMyAlert = currentUser && alert.assigned_to === currentUser.id;
+  const canManage = currentUser && ['manager', 'admin'].includes(currentUser.role);
+  const actions = [];
+
+  switch (alert.status) {
+    case 'open':
+      actions.push(`<button class="btn primary" onclick="assignAlertToMe(${alert.id})">Claim</button>`);
+      if (canManage) {
+        actions.push(`<button class="btn ghost" onclick="openAlertAssignModal(${alert.id})">Assign to...</button>`);
+      }
+      break;
+
+    case 'assigned':
+      if (isMyAlert) {
+        actions.push(`<button class="btn primary" onclick="startAlertWork(${alert.id})">Start Work</button>`);
+        actions.push(`<button class="btn ghost" onclick="unassignAlert(${alert.id})">Unassign</button>`);
+      }
+      if (canManage && !isMyAlert) {
+        actions.push(`<button class="btn ghost" onclick="openAlertAssignModal(${alert.id})">Reassign</button>`);
+      }
+      break;
+
+    case 'in_progress':
+      if (isMyAlert) {
+        actions.push(`<button class="btn primary" onclick="openAlertResolveModal(${alert.id})">Resolve</button>`);
+        actions.push(`<button class="btn ghost" onclick="openAlertEscalateModal(${alert.id})">Escalate</button>`);
+        actions.push(`<button class="btn ghost" onclick="openAlertHoldModal(${alert.id})">Put on Hold</button>`);
+      }
+      break;
+
+    case 'escalated':
+      if (isMyAlert) {
+        actions.push(`<button class="btn primary" onclick="resumeAlert(${alert.id})">Resume</button>`);
+      }
+      if (canManage) {
+        actions.push(`<button class="btn primary" onclick="openAlertResolveModal(${alert.id})">Resolve</button>`);
+        actions.push(`<button class="btn ghost" onclick="openAlertAssignModal(${alert.id})">Reassign</button>`);
+      }
+      break;
+
+    case 'on_hold':
+      if (isMyAlert) {
+        actions.push(`<button class="btn primary" onclick="resumeAlert(${alert.id})">Resume</button>`);
+        actions.push(`<button class="btn ghost" onclick="openAlertResolveModal(${alert.id})">Resolve</button>`);
+      }
+      break;
+
+    case 'resolved':
+      if (canManage) {
+        actions.push(`<button class="btn ghost" onclick="reopenAlert(${alert.id})">Reopen</button>`);
+      }
+      break;
+  }
+
+  return actions.join(' ');
+}
+
+// Alert lifecycle API calls
+function getAlertApiParams() {
+  if (!currentUser) return '';
+  return `?current_user_id=${currentUser.id}&current_user_role=${currentUser.role || 'analyst'}`;
+}
+
+async function assignAlertToMe(alertId) {
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Please log in to claim alerts');
+    return;
+  }
+
+  try {
+    const params = getAlertApiParams();
+    const result = await fetchJSON(`/alerts/${alertId}/assign${params}`, {
+      method: 'POST',
+      body: JSON.stringify({ assigned_to: currentUser.id }),
+    });
+
+    if (result) {
+      showToast('success', 'Alert claimed', `Alert #${alertId} is now assigned to you`);
+      await loadAlerts();
+      if (selectedAlertId === alertId) {
+        openAlertPanel(alertId);
+      }
+    }
+  } catch (error) {
+    showToast('error', 'Failed to claim', error.message);
+  }
+}
+
+async function unassignAlert(alertId) {
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Please log in');
+    return;
+  }
+
+  try {
+    const params = getAlertApiParams();
+    const result = await fetchJSON(`/alerts/${alertId}/unassign${params}`, {
+      method: 'POST',
+    });
+
+    if (result) {
+      showToast('success', 'Alert unassigned', `Alert #${alertId} is now unassigned`);
+      await loadAlerts();
+      if (selectedAlertId === alertId) {
+        openAlertPanel(alertId);
+      }
+    }
+  } catch (error) {
+    showToast('error', 'Failed to unassign', error.message);
+  }
+}
+
+async function startAlertWork(alertId) {
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Please log in');
+    return;
+  }
+
+  try {
+    const params = getAlertApiParams();
+    const result = await fetchJSON(`/alerts/${alertId}/start${params}`, {
+      method: 'POST',
+    });
+
+    if (result) {
+      showToast('success', 'Work started', `Alert #${alertId} is now in progress`);
+      await loadAlerts();
+      if (selectedAlertId === alertId) {
+        openAlertPanel(alertId);
+      }
+    }
+  } catch (error) {
+    showToast('error', 'Failed to start work', error.message);
+  }
+}
+
+async function resumeAlert(alertId) {
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Please log in');
+    return;
+  }
+
+  try {
+    const params = getAlertApiParams();
+    const result = await fetchJSON(`/alerts/${alertId}/resume${params}`, {
+      method: 'POST',
+    });
+
+    if (result) {
+      showToast('success', 'Work resumed', `Alert #${alertId} is now in progress`);
+      await loadAlerts();
+      if (selectedAlertId === alertId) {
+        openAlertPanel(alertId);
+      }
+    }
+  } catch (error) {
+    showToast('error', 'Failed to resume', error.message);
+  }
+}
+
+async function reopenAlert(alertId) {
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Please log in');
+    return;
+  }
+
+  try {
+    const params = getAlertApiParams();
+    const result = await fetchJSON(`/alerts/${alertId}/reopen${params}`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'Reopened by manager' }),
+    });
+
+    if (result) {
+      showToast('success', 'Alert reopened', `Alert #${alertId} has been reopened`);
+      await loadAlerts();
+      if (selectedAlertId === alertId) {
+        openAlertPanel(alertId);
+      }
+    }
+  } catch (error) {
+    showToast('error', 'Failed to reopen', error.message);
+  }
+}
+
+// Modal handlers
+function openAlertAssignModal(alertId) {
+  document.getElementById('alertAssignId').value = alertId;
+  populateUserSelect('alertAssignTo');
+  document.getElementById('alertAssignModal').classList.remove('hidden');
+}
+
+function closeAlertAssignModal() {
+  document.getElementById('alertAssignModal').classList.add('hidden');
+  document.getElementById('alertAssignForm').reset();
+}
+
+async function submitAlertAssign(event) {
+  event.preventDefault();
+  const alertId = document.getElementById('alertAssignId').value;
+  const assignedTo = document.getElementById('alertAssignTo').value;
+
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Please log in');
+    return;
+  }
+
+  try {
+    const params = getAlertApiParams();
+    const result = await fetchJSON(`/alerts/${alertId}/assign${params}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        assigned_to: assignedTo,
+        assigned_by: currentUser.id,
+      }),
+    });
+
+    if (result) {
+      showToast('success', 'Alert assigned', `Alert #${alertId} has been assigned`);
+      closeAlertAssignModal();
+      await loadAlerts();
+      if (selectedAlertId == alertId) {
+        openAlertPanel(alertId);
+      }
+    }
+  } catch (error) {
+    showToast('error', 'Failed to assign', error.message);
+  }
+}
+
+function openAlertEscalateModal(alertId) {
+  document.getElementById('alertEscalateId').value = alertId;
+  populateUserSelect('alertEscalateTo', ['senior_analyst', 'manager', 'admin']);
+  document.getElementById('alertEscalateModal').classList.remove('hidden');
+}
+
+function closeAlertEscalateModal() {
+  document.getElementById('alertEscalateModal').classList.add('hidden');
+  document.getElementById('alertEscalateForm').reset();
+}
+
+async function submitAlertEscalate(event) {
+  event.preventDefault();
+  const alertId = document.getElementById('alertEscalateId').value;
+  const escalateTo = document.getElementById('alertEscalateTo').value;
+  const reason = document.getElementById('alertEscalateReason').value;
+
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Please log in');
+    return;
+  }
+
+  try {
+    const params = getAlertApiParams();
+    const result = await fetchJSON(`/alerts/${alertId}/escalate${params}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        escalated_to: escalateTo,
+        reason: reason,
+      }),
+    });
+
+    if (result) {
+      showToast('success', 'Alert escalated', `Alert #${alertId} has been escalated`);
+      closeAlertEscalateModal();
+      await loadAlerts();
+      if (selectedAlertId == alertId) {
+        openAlertPanel(alertId);
+      }
+    }
+  } catch (error) {
+    showToast('error', 'Failed to escalate', error.message);
+  }
+}
+
+function openAlertResolveModal(alertId) {
+  document.getElementById('alertResolveId').value = alertId;
+  document.getElementById('alertResolveModal').classList.remove('hidden');
+}
+
+function closeAlertResolveModal() {
+  document.getElementById('alertResolveModal').classList.add('hidden');
+  document.getElementById('alertResolveForm').reset();
+}
+
+function toggleResolutionNotes() {
+  const type = document.getElementById('alertResolutionType').value;
+  const notes = document.getElementById('alertResolutionNotes');
+  if (type === 'other') {
+    notes.required = true;
+    notes.placeholder = 'Required for "Other" resolution type...';
+  } else {
+    notes.required = false;
+    notes.placeholder = 'Add notes about the resolution...';
+  }
+}
+
+async function submitAlertResolve(event) {
+  event.preventDefault();
+  const alertId = document.getElementById('alertResolveId').value;
+  const resolutionType = document.getElementById('alertResolutionType').value;
+  const notes = document.getElementById('alertResolutionNotes').value;
+
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Please log in');
+    return;
+  }
+
+  try {
+    const params = getAlertApiParams();
+    const result = await fetchJSON(`/alerts/${alertId}/resolve${params}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        resolution_type: resolutionType,
+        resolution_notes: notes || null,
+      }),
+    });
+
+    if (result) {
+      showToast('success', 'Alert resolved', `Alert #${alertId} has been resolved`);
+      closeAlertResolveModal();
+      await loadAlerts();
+      if (selectedAlertId == alertId) {
+        openAlertPanel(alertId);
+      }
+    }
+  } catch (error) {
+    showToast('error', 'Failed to resolve', error.message);
+  }
+}
+
+function openAlertHoldModal(alertId) {
+  document.getElementById('alertHoldId').value = alertId;
+  document.getElementById('alertHoldModal').classList.remove('hidden');
+}
+
+function closeAlertHoldModal() {
+  document.getElementById('alertHoldModal').classList.add('hidden');
+  document.getElementById('alertHoldForm').reset();
+}
+
+async function submitAlertHold(event) {
+  event.preventDefault();
+  const alertId = document.getElementById('alertHoldId').value;
+  const reason = document.getElementById('alertHoldReason').value;
+
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Please log in');
+    return;
+  }
+
+  try {
+    const params = getAlertApiParams();
+    const result = await fetchJSON(`/alerts/${alertId}/hold${params}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        reason: reason || null,
+      }),
+    });
+
+    if (result) {
+      showToast('success', 'Alert on hold', `Alert #${alertId} is now on hold`);
+      closeAlertHoldModal();
+      await loadAlerts();
+      if (selectedAlertId == alertId) {
+        openAlertPanel(alertId);
+      }
+    }
+  } catch (error) {
+    showToast('error', 'Failed to put on hold', error.message);
+  }
+}
+
+function openAlertNoteModal(alertId) {
+  document.getElementById('alertNoteAlertId').value = alertId;
+  document.getElementById('alertNoteModal').classList.remove('hidden');
+}
+
+function closeAlertNoteModal() {
+  document.getElementById('alertNoteModal').classList.add('hidden');
+  document.getElementById('alertNoteForm').reset();
+}
+
+async function submitAlertNote(event) {
+  event.preventDefault();
+  const alertId = document.getElementById('alertNoteAlertId').value;
+  const content = document.getElementById('alertNoteContent').value;
+
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Please log in to add notes');
+    return;
+  }
+
+  try {
+    const result = await fetchJSON(`/alerts/${alertId}/notes`, {
+      method: 'POST',
+      body: JSON.stringify({
+        user_id: currentUser.id,
+        content: content,
+        note_type: 'comment',
+      }),
+    });
+
+    if (result) {
+      showToast('success', 'Note added', 'Your note has been added');
+      closeAlertNoteModal();
+      if (selectedAlertId == alertId) {
+        openAlertPanel(alertId);
+      }
+    }
+  } catch (error) {
+    showToast('error', 'Failed to add note', error.message);
+  }
+}
+
+// Populate user select dropdowns
+function populateUserSelect(selectId, roleFilter = null) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+
+  const users = roleFilter
+    ? state.users.filter(u => roleFilter.includes(u.role) && u.is_active)
+    : state.users.filter(u => u.is_active);
+
+  select.innerHTML = '<option value="">Select user...</option>';
+  users.forEach(user => {
+    const option = document.createElement('option');
+    option.value = user.id;
+    option.textContent = `${user.full_name} (${user.role})`;
+    select.appendChild(option);
+  });
+}
+
+// =============================================================================
+// ALERT PANEL EDIT MODE FUNCTIONS
+// =============================================================================
+
+function toggleAlertEditMode() {
+  panelEditMode = !panelEditMode;
+  if (currentPanelAlert) {
+    // Re-fetch and render with edit mode
+    openAlertPanel(currentPanelAlert.id);
+  }
+}
+
+async function saveAlertEdits(alertId) {
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Please log in to save changes');
+    return;
+  }
+
+  const priority = document.getElementById('editAlertPriority')?.value;
+  const dueDate = document.getElementById('editAlertDueDate')?.value;
+  const assignee = document.getElementById('editAlertAssignee')?.value;
+
+  try {
+    // Update priority and due date
+    if (priority || dueDate !== undefined) {
+      const params = new URLSearchParams();
+      params.append('current_user_id', currentUser.id);
+      if (priority) params.append('priority', priority);
+      if (dueDate !== undefined) params.append('due_date', dueDate || '');
+
+      await fetchJSON(`/alerts/${alertId}?${params.toString()}`, {
+        method: 'PATCH',
+      });
+    }
+
+    // Handle assignee change separately (goes through Temporal)
+    if (assignee !== undefined) {
+      const currentAssignee = currentPanelAlert.assigned_to;
+      if (assignee && assignee !== currentAssignee) {
+        // Assign to new user
+        await fetchJSON(`/alerts/${alertId}/assign${getAlertApiParams()}`, {
+          method: 'POST',
+          body: JSON.stringify({
+            assigned_to: assignee,
+            assigned_by: currentUser.id,
+          }),
+        });
+      } else if (!assignee && currentAssignee) {
+        // Unassign
+        await fetchJSON(`/alerts/${alertId}/unassign${getAlertApiParams()}`, {
+          method: 'POST',
+        });
+      }
+    }
+
+    showToast('success', 'Saved', 'Alert updated successfully');
+    panelEditMode = false;
+    await loadAlerts();
+    await openAlertPanel(alertId);
+  } catch (error) {
+    showToast('error', 'Save failed', error.message || 'Unable to save changes');
+  }
+}
+
+async function addInlineAlertNote(alertId) {
+  const textarea = document.getElementById('inlineAlertNote');
+  const content = textarea?.value?.trim();
+
+  if (!content) {
+    showToast('error', 'Empty note', 'Please enter a note');
+    return;
+  }
+
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Please log in to add notes');
+    return;
+  }
+
+  try {
+    await fetchJSON(`/alerts/${alertId}/notes${getAlertApiParams()}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        content: content,
+        note_type: 'comment',
+      }),
+    });
+
+    showToast('success', 'Note added', 'Your note has been saved');
+    textarea.value = '';
+    await openAlertPanel(alertId); // Refresh panel
+  } catch (error) {
+    showToast('error', 'Failed to add note', error.message || 'Unable to add note');
+  }
+}
+
+async function uploadInlineAlertAttachment(alertId, file) {
+  if (!file) return;
+
+  if (!currentUser) {
+    showToast('error', 'Not logged in', 'Please log in to upload files');
+    return;
+  }
+
+  if (file.size > 10 * 1024 * 1024) {
+    showToast('error', 'File too large', 'Maximum file size is 10MB');
+    return;
+  }
+
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(`/alerts/${alertId}/attachments?current_user_id=${currentUser.id}`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Upload failed');
+    }
+
+    showToast('success', 'File uploaded', 'Attachment added successfully');
+    document.getElementById('inlineAlertAttachment').value = '';
+    await openAlertPanel(alertId); // Refresh panel
+  } catch (error) {
+    showToast('error', 'Upload failed', error.message || 'Unable to upload file');
+  }
+}
+
+async function downloadAlertAttachment(alertId, attachmentId) {
+  try {
+    const response = await fetch(`/alerts/${alertId}/attachments/${attachmentId}/download`);
+    if (!response.ok) throw new Error('Download failed');
+
+    const blob = await response.blob();
+    const contentDisposition = response.headers.get('Content-Disposition');
+    let filename = 'download';
+    if (contentDisposition) {
+      const match = contentDisposition.match(/filename="(.+)"/);
+      if (match) filename = match[1];
+    }
+
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+  } catch (error) {
+    showToast('error', 'Download failed', error.message || 'Unable to download file');
+  }
+}
+
+async function deleteAlertAttachment(alertId, attachmentId) {
+  if (!confirm('Delete this attachment?')) return;
+
+  try {
+    await fetchJSON(`/alerts/${alertId}/attachments/${attachmentId}`, {
+      method: 'DELETE',
+    });
+
+    showToast('success', 'Deleted', 'Attachment removed');
+    await openAlertPanel(alertId); // Refresh panel
+  } catch (error) {
+    showToast('error', 'Delete failed', error.message || 'Unable to delete attachment');
+  }
+}
+
+// Export alert lifecycle functions to window for onclick handlers
+window.openAlertPanel = openAlertPanel;
+window.closeDetailPanel = closeDetailPanel;
+window.assignAlertToMe = assignAlertToMe;
+window.unassignAlert = unassignAlert;
+window.toggleAlertEditMode = toggleAlertEditMode;
+window.saveAlertEdits = saveAlertEdits;
+window.addInlineAlertNote = addInlineAlertNote;
+window.uploadInlineAlertAttachment = uploadInlineAlertAttachment;
+window.downloadAlertAttachment = downloadAlertAttachment;
+window.deleteAlertAttachment = deleteAlertAttachment;
+window.startAlertWork = startAlertWork;
+window.resumeAlert = resumeAlert;
+window.reopenAlert = reopenAlert;
+window.openAlertAssignModal = openAlertAssignModal;
+window.closeAlertAssignModal = closeAlertAssignModal;
+window.submitAlertAssign = submitAlertAssign;
+window.openAlertEscalateModal = openAlertEscalateModal;
+window.closeAlertEscalateModal = closeAlertEscalateModal;
+window.submitAlertEscalate = submitAlertEscalate;
+window.openAlertResolveModal = openAlertResolveModal;
+window.closeAlertResolveModal = closeAlertResolveModal;
+window.submitAlertResolve = submitAlertResolve;
+window.openAlertHoldModal = openAlertHoldModal;
+window.closeAlertHoldModal = closeAlertHoldModal;
+window.submitAlertHold = submitAlertHold;
+window.openAlertNoteModal = openAlertNoteModal;
+window.closeAlertNoteModal = closeAlertNoteModal;
+window.submitAlertNote = submitAlertNote;
+
+// =============================================================================
+// END ALERT LIFECYCLE FUNCTIONS
+// =============================================================================
 
 function renderAlertDefinitions() {
   const list = state.alertDefinitions
@@ -3087,6 +4179,10 @@ async function claimTask(taskId) {
     if (result) {
       showToast('success', 'Task claimed', 'You have claimed this task');
       await loadTasks();
+      // Refresh panel if viewing this task
+      if (state.selectedTask && state.selectedTask.id === taskId) {
+        await viewTaskDetail(taskId);
+      }
     }
   } catch (error) {
     showToast('error', 'Claim failed', error.message || 'Unable to claim task');
@@ -3101,6 +4197,10 @@ async function releaseTask(taskId) {
     if (result) {
       showToast('info', 'Task released', 'Task returned to queue');
       await loadTasks();
+      // Refresh panel if viewing this task
+      if (state.selectedTask && state.selectedTask.id === taskId) {
+        await viewTaskDetail(taskId);
+      }
     }
   } catch (error) {
     showToast('error', 'Release failed', error.message || 'Unable to release task');
@@ -3124,7 +4224,7 @@ async function completeTaskPrompt(taskId) {
       showToast('success', 'Task completed', 'Task marked as completed');
       await loadTasks();
       await loadAlerts(); // Refresh alerts since completing a task may close linked alert
-      toggleTaskDetailModal(false);
+      closeDetailPanel();
     }
   } catch (error) {
     showToast('error', 'Complete failed', error.message || 'Unable to complete task');
@@ -3147,7 +4247,7 @@ async function cancelTask(taskId) {
     if (result) {
       showToast('info', 'Task cancelled', 'Task has been cancelled');
       await loadTasks();
-      toggleTaskDetailModal(false);
+      closeDetailPanel();
     }
   } catch (error) {
     showToast('error', 'Cancel failed', error.message || 'Unable to cancel task');
@@ -3345,6 +4445,10 @@ async function startTaskWorkflow(taskId) {
       showToast('success', 'Workflow started', `Workflow ${result.workflow_id} started`);
       await loadTasks();
       await loadWorkflows();
+      // Refresh panel if viewing this task
+      if (state.selectedTask && state.selectedTask.id === taskId) {
+        await viewTaskDetail(taskId);
+      }
     }
   } catch (error) {
     showToast('error', 'Workflow start failed', error.message || 'Unable to start workflow');
@@ -3352,6 +4456,20 @@ async function startTaskWorkflow(taskId) {
 }
 
 async function viewTaskDetail(taskId) {
+  // Use slide-out panel (same as alerts)
+  const panel = document.getElementById('detailPanel');
+  const overlay = document.getElementById('detailPanelOverlay');
+
+  if (!panel || !overlay) return;
+
+  // Show loading state
+  document.getElementById('panelTitle').textContent = 'Task Details';
+  document.getElementById('panelContent').innerHTML = '<div style="padding: 24px; text-align: center;">Loading...</div>';
+  document.getElementById('panelActions').innerHTML = '';
+
+  panel.classList.remove('hidden');
+  overlay.classList.remove('hidden');
+
   try {
     // Load task, notes, and attachments in parallel
     const [task, notes, attachments] = await Promise.all([
@@ -3359,7 +4477,7 @@ async function viewTaskDetail(taskId) {
       fetchJSON(`/tasks/${taskId}/notes`),
       fetchJSON(`/tasks/${taskId}/attachments`),
     ]);
-    if (!task) return;
+    if (!task) throw new Error('Task not found');
 
     state.selectedTask = task;
 
@@ -3415,7 +4533,7 @@ async function viewTaskDetail(taskId) {
             <span class="badge ${priorityBadge(task.priority)}">${task.priority}</span>
             <span class="chip">${task.task_type.replace('_', ' ')}</span>
             ${getAssignmentDisplay()}
-            ${task.workflow_status ? `<span class="badge blue">${task.workflow_status}</span>` : ''}
+            ${task.workflow_status && isActive ? `<span class="badge blue">${task.workflow_status}</span>` : ''}
           </div>
         </div>
 
@@ -3551,13 +4669,12 @@ async function viewTaskDetail(taskId) {
       actions += `<button class="btn ghost red" onclick="cancelTask(${task.id})">Cancel</button>`;
     }
 
-    document.getElementById('taskDetailTitle').textContent = task.title;
-    document.getElementById('taskDetailContent').innerHTML = content;
-    document.getElementById('taskDetailActions').innerHTML = actions;
-
-    toggleTaskDetailModal(true);
+    // Render to slide-out panel
+    document.getElementById('panelTitle').textContent = `Task: ${task.title}`;
+    document.getElementById('panelContent').innerHTML = content;
+    document.getElementById('panelActions').innerHTML = actions;
   } catch (error) {
-    showToast('error', 'Load failed', error.message || 'Unable to load task details');
+    document.getElementById('panelContent').innerHTML = `<div style="padding: 24px; color: var(--red);">Error loading task: ${error.message}</div>`;
   }
 }
 

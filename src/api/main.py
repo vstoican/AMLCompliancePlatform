@@ -24,11 +24,9 @@ from .config import settings
 from .db import connection, get_pool
 from .events import publish_event, connect_jetstream, close_jetstream
 from .models import (
-    Alert,
     AlertDefinition,
     AlertDefinitionCreate,
     AlertDefinitionUpdate,
-    AlertUpdate,
     Customer,
     CustomerCreate,
     ReportFilters,
@@ -39,6 +37,7 @@ from .risk import calculate_risk
 from .streaming import router as streaming_router
 from .tasks import router as tasks_router, definition_router as task_definitions_router
 from .users import router as users_router
+from .alerts import router as alerts_router
 
 app = FastAPI(title="AML Compliance MVP", version="0.1.0")
 
@@ -59,6 +58,9 @@ app.include_router(task_definitions_router)
 
 # Register user management router
 app.include_router(users_router)
+
+# Register alert lifecycle router
+app.include_router(alerts_router)
 
 # Global Temporal client
 temporal_client: Optional[TemporalClient] = None
@@ -574,59 +576,7 @@ async def delete_alert_definition(
         await cur.execute("DELETE FROM alert_definitions WHERE id = %s", (definition_id,))
 
 
-@app.get("/alerts")
-async def list_alerts(
-    status_filter: Optional[str] = Query(None, alias="status"),
-    conn: AsyncConnection = Depends(connection),
-):
-    query = "SELECT * FROM alerts"
-    params: list = []
-    if status_filter:
-        query += " WHERE status = %s"
-        params.append(status_filter)
-    query += " ORDER BY created_at DESC LIMIT 100"
-
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(query, params)
-        rows = await cur.fetchall()
-
-    return JSONResponse(
-        content=[Alert(**row).model_dump(mode='json') for row in rows],
-        headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0",
-        },
-    )
-
-
-@app.patch("/alerts/{alert_id}", response_model=Alert)
-async def update_alert(
-    alert_id: int, payload: AlertUpdate, conn: AsyncConnection = Depends(connection)
-) -> Alert:
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute("SELECT * FROM alerts WHERE id = %s", (alert_id,))
-        existing = await cur.fetchone()
-        if not existing:
-            raise HTTPException(status_code=404, detail="Alert not found")
-
-        await cur.execute(
-            """
-            UPDATE alerts
-            SET status = COALESCE(%s, status),
-                resolution_notes = COALESCE(%s, resolution_notes),
-                resolved_by = COALESCE(%s, resolved_by),
-                resolved_at = CASE
-                    WHEN %s IN ('resolved', 'dismissed', 'closed') THEN NOW()
-                    ELSE resolved_at
-                END
-            WHERE id = %s
-            RETURNING *
-            """,
-            (payload.status, payload.resolution_notes, payload.resolved_by, payload.status, alert_id),
-        )
-        row = await cur.fetchone()
-    return Alert(**row)
+# NOTE: Alert CRUD and lifecycle endpoints moved to alerts.py router
 
 
 @app.post("/kyc/run")

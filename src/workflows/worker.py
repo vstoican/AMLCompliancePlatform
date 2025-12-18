@@ -249,7 +249,7 @@ async def update_alert_status_activity(
     notes: Optional[str] = None,
     resolved_by: Optional[str] = None
 ) -> None:
-    """Update alert status/resolution fields in the database"""
+    """Update alert status/resolution fields in the database (legacy)"""
     pool = get_pool()
     async with pool.connection() as conn, conn.cursor() as cur:
         await cur.execute(
@@ -258,12 +258,399 @@ async def update_alert_status_activity(
             SET status = %s,
                 resolution_notes = COALESCE(%s, resolution_notes),
                 resolved_by = COALESCE(%s, resolved_by),
-                resolved_at = CASE WHEN %s IN ('resolved', 'dismissed', 'closed') THEN NOW() ELSE resolved_at END
+                resolved_at = CASE WHEN %s = 'resolved' THEN NOW() ELSE resolved_at END
             WHERE id = %s
             """,
             (status, notes, resolved_by, status, alert_id),
         )
     logger.info(f"Updated alert {alert_id} to status {status}")
+
+
+# =============================================================================
+# ALERT LIFECYCLE ACTIVITIES
+# =============================================================================
+
+# Valid status transitions
+ALERT_STATUS_TRANSITIONS = {
+    'open': ['assigned'],
+    'assigned': ['in_progress', 'open'],
+    'in_progress': ['escalated', 'on_hold', 'resolved'],
+    'escalated': ['in_progress', 'resolved'],
+    'on_hold': ['in_progress', 'resolved'],
+    'resolved': ['open'],  # Reopen - manager only
+}
+
+ALERT_STATUSES = ['open', 'assigned', 'in_progress', 'escalated', 'on_hold', 'resolved']
+RESOLUTION_TYPES = ['confirmed_suspicious', 'false_positive', 'not_suspicious', 'duplicate', 'other']
+
+
+def _validate_transition(current_status: str, new_status: str) -> bool:
+    """Check if status transition is valid"""
+    allowed = ALERT_STATUS_TRANSITIONS.get(current_status, [])
+    return new_status in allowed
+
+
+async def _get_alert_current_status(conn, alert_id: int) -> Optional[str]:
+    """Get current status of an alert"""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute("SELECT status FROM alerts WHERE id = %s", (alert_id,))
+        row = await cur.fetchone()
+        return row["status"] if row else None
+
+
+async def _log_status_change(
+    conn,
+    alert_id: int,
+    previous_status: str,
+    new_status: str,
+    changed_by: str,
+    reason: Optional[str] = None,
+    metadata: Optional[dict] = None
+) -> None:
+    """Log a status change to the history table"""
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            INSERT INTO alert_status_history (alert_id, previous_status, new_status, changed_by, reason, metadata)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (alert_id, previous_status, new_status, changed_by, reason, Jsonb(metadata or {})),
+        )
+
+
+@activity.defn
+async def assign_alert_activity(
+    alert_id: int,
+    assigned_to: str,
+    assigned_by: Optional[str] = None
+) -> dict[str, Any]:
+    """Assign an alert to a user (self or by manager)"""
+    pool = get_pool()
+    async with pool.connection() as conn:
+        current_status = await _get_alert_current_status(conn, alert_id)
+
+        if current_status is None:
+            return {"success": False, "error": "Alert not found"}
+
+        if current_status != 'open':
+            return {"success": False, "error": f"Cannot assign alert in status '{current_status}'"}
+
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute(
+                """
+                UPDATE alerts
+                SET status = 'assigned',
+                    assigned_to = %s,
+                    assigned_by = %s,
+                    assigned_at = NOW()
+                WHERE id = %s
+                RETURNING id, status, assigned_to, assigned_at
+                """,
+                (assigned_to, assigned_by or assigned_to, alert_id),
+            )
+            result = await cur.fetchone()
+
+        await _log_status_change(
+            conn, alert_id, current_status, 'assigned',
+            assigned_by or assigned_to, None,
+            {"assigned_to": assigned_to, "self_assigned": assigned_by is None or assigned_by == assigned_to}
+        )
+
+        logger.info(f"Alert {alert_id} assigned to {assigned_to}")
+        return {"success": True, "alert_id": alert_id, "status": "assigned", "assigned_to": assigned_to}
+
+
+@activity.defn
+async def unassign_alert_activity(alert_id: int, user_id: str) -> dict[str, Any]:
+    """Unassign an alert (back to open)"""
+    pool = get_pool()
+    async with pool.connection() as conn:
+        current_status = await _get_alert_current_status(conn, alert_id)
+
+        if current_status is None:
+            return {"success": False, "error": "Alert not found"}
+
+        if current_status != 'assigned':
+            return {"success": False, "error": f"Cannot unassign alert in status '{current_status}'"}
+
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE alerts
+                SET status = 'open',
+                    assigned_to = NULL,
+                    assigned_by = NULL,
+                    assigned_at = NULL
+                WHERE id = %s
+                """,
+                (alert_id,),
+            )
+
+        await _log_status_change(conn, alert_id, current_status, 'open', user_id, "Unassigned")
+
+        logger.info(f"Alert {alert_id} unassigned by {user_id}")
+        return {"success": True, "alert_id": alert_id, "status": "open"}
+
+
+@activity.defn
+async def start_alert_work_activity(alert_id: int, user_id: str) -> dict[str, Any]:
+    """Start work on an assigned alert (assigned -> in_progress)"""
+    pool = get_pool()
+    async with pool.connection() as conn:
+        current_status = await _get_alert_current_status(conn, alert_id)
+
+        if current_status is None:
+            return {"success": False, "error": "Alert not found"}
+
+        if current_status != 'assigned':
+            return {"success": False, "error": f"Cannot start work on alert in status '{current_status}'"}
+
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE alerts SET status = 'in_progress' WHERE id = %s",
+                (alert_id,),
+            )
+
+        await _log_status_change(conn, alert_id, current_status, 'in_progress', user_id, "Started work")
+
+        logger.info(f"Alert {alert_id} work started by {user_id}")
+        return {"success": True, "alert_id": alert_id, "status": "in_progress"}
+
+
+@activity.defn
+async def escalate_alert_lifecycle_activity(
+    alert_id: int,
+    escalated_by: str,
+    escalated_to: str,
+    reason: str
+) -> dict[str, Any]:
+    """Escalate an alert to a senior/manager"""
+    pool = get_pool()
+    async with pool.connection() as conn:
+        current_status = await _get_alert_current_status(conn, alert_id)
+
+        if current_status is None:
+            return {"success": False, "error": "Alert not found"}
+
+        if current_status != 'in_progress':
+            return {"success": False, "error": f"Cannot escalate alert in status '{current_status}'"}
+
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE alerts
+                SET status = 'escalated',
+                    escalated_to = %s,
+                    escalated_by = %s,
+                    escalated_at = NOW(),
+                    escalation_reason = %s
+                WHERE id = %s
+                """,
+                (escalated_to, escalated_by, reason, alert_id),
+            )
+
+        await _log_status_change(
+            conn, alert_id, current_status, 'escalated', escalated_by, reason,
+            {"escalated_to": escalated_to}
+        )
+
+        logger.info(f"Alert {alert_id} escalated to {escalated_to} by {escalated_by}")
+        return {"success": True, "alert_id": alert_id, "status": "escalated", "escalated_to": escalated_to}
+
+
+@activity.defn
+async def hold_alert_activity(alert_id: int, user_id: str, reason: Optional[str] = None) -> dict[str, Any]:
+    """Put an alert on hold"""
+    pool = get_pool()
+    async with pool.connection() as conn:
+        current_status = await _get_alert_current_status(conn, alert_id)
+
+        if current_status is None:
+            return {"success": False, "error": "Alert not found"}
+
+        if current_status != 'in_progress':
+            return {"success": False, "error": f"Cannot put alert on hold from status '{current_status}'"}
+
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE alerts SET status = 'on_hold' WHERE id = %s",
+                (alert_id,),
+            )
+
+        await _log_status_change(conn, alert_id, current_status, 'on_hold', user_id, reason or "Put on hold")
+
+        logger.info(f"Alert {alert_id} put on hold by {user_id}")
+        return {"success": True, "alert_id": alert_id, "status": "on_hold"}
+
+
+@activity.defn
+async def resume_alert_activity(alert_id: int, user_id: str) -> dict[str, Any]:
+    """Resume work on an alert (on_hold/escalated -> in_progress)"""
+    pool = get_pool()
+    async with pool.connection() as conn:
+        current_status = await _get_alert_current_status(conn, alert_id)
+
+        if current_status is None:
+            return {"success": False, "error": "Alert not found"}
+
+        if current_status not in ('on_hold', 'escalated'):
+            return {"success": False, "error": f"Cannot resume alert from status '{current_status}'"}
+
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "UPDATE alerts SET status = 'in_progress' WHERE id = %s",
+                (alert_id,),
+            )
+
+        await _log_status_change(conn, alert_id, current_status, 'in_progress', user_id, "Resumed work")
+
+        logger.info(f"Alert {alert_id} resumed by {user_id}")
+        return {"success": True, "alert_id": alert_id, "status": "in_progress"}
+
+
+@activity.defn
+async def resolve_alert_activity(
+    alert_id: int,
+    user_id: str,
+    resolution_type: str,
+    resolution_notes: Optional[str] = None
+) -> dict[str, Any]:
+    """Resolve an alert with a resolution type"""
+    pool = get_pool()
+
+    if resolution_type not in RESOLUTION_TYPES:
+        return {"success": False, "error": f"Invalid resolution type: {resolution_type}"}
+
+    async with pool.connection() as conn:
+        current_status = await _get_alert_current_status(conn, alert_id)
+
+        if current_status is None:
+            return {"success": False, "error": "Alert not found"}
+
+        if current_status not in ('in_progress', 'escalated', 'on_hold'):
+            return {"success": False, "error": f"Cannot resolve alert from status '{current_status}'"}
+
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE alerts
+                SET status = 'resolved',
+                    resolution_type = %s,
+                    resolution_notes = %s,
+                    resolved_by = %s,
+                    resolved_at = NOW()
+                WHERE id = %s
+                """,
+                (resolution_type, resolution_notes, user_id, alert_id),
+            )
+
+        await _log_status_change(
+            conn, alert_id, current_status, 'resolved', user_id, resolution_notes,
+            {"resolution_type": resolution_type}
+        )
+
+        logger.info(f"Alert {alert_id} resolved as {resolution_type} by {user_id}")
+        return {"success": True, "alert_id": alert_id, "status": "resolved", "resolution_type": resolution_type}
+
+
+@activity.defn
+async def reopen_alert_activity(alert_id: int, user_id: str, reason: Optional[str] = None) -> dict[str, Any]:
+    """Reopen a resolved alert (manager only - enforced at API level)"""
+    pool = get_pool()
+    async with pool.connection() as conn:
+        current_status = await _get_alert_current_status(conn, alert_id)
+
+        if current_status is None:
+            return {"success": False, "error": "Alert not found"}
+
+        if current_status != 'resolved':
+            return {"success": False, "error": f"Cannot reopen alert from status '{current_status}'"}
+
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                UPDATE alerts
+                SET status = 'open',
+                    assigned_to = NULL,
+                    assigned_by = NULL,
+                    assigned_at = NULL,
+                    resolution_type = NULL,
+                    resolved_by = NULL,
+                    resolved_at = NULL
+                WHERE id = %s
+                """,
+                (alert_id,),
+            )
+
+        await _log_status_change(conn, alert_id, current_status, 'open', user_id, reason or "Reopened")
+
+        logger.info(f"Alert {alert_id} reopened by {user_id}")
+        return {"success": True, "alert_id": alert_id, "status": "open"}
+
+
+@activity.defn
+async def add_alert_note_activity(
+    alert_id: int,
+    user_id: str,
+    content: str,
+    note_type: str = "comment"
+) -> dict[str, Any]:
+    """Add a note to an alert"""
+    pool = get_pool()
+    async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            INSERT INTO alert_notes (alert_id, user_id, content, note_type)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, alert_id, user_id, content, note_type, created_at
+            """,
+            (alert_id, user_id, content, note_type),
+        )
+        result = await cur.fetchone()
+
+        logger.info(f"Note added to alert {alert_id} by {user_id}")
+        return {
+            "success": True,
+            "note_id": result["id"],
+            "alert_id": alert_id,
+            "created_at": result["created_at"].isoformat()
+        }
+
+
+@activity.defn
+async def get_alert_details_activity(alert_id: int) -> dict[str, Any]:
+    """Get full alert details including assignment info"""
+    pool = get_pool()
+    async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            SELECT a.*,
+                   u_assigned.full_name as assigned_to_name,
+                   u_assigned.email as assigned_to_email,
+                   u_escalated.full_name as escalated_to_name,
+                   c.full_name as customer_name
+            FROM alerts a
+            LEFT JOIN users u_assigned ON a.assigned_to = u_assigned.id
+            LEFT JOIN users u_escalated ON a.escalated_to = u_escalated.id
+            LEFT JOIN customers c ON a.customer_id = c.id
+            WHERE a.id = %s
+            """,
+            (alert_id,),
+        )
+        row = await cur.fetchone()
+
+        if not row:
+            return {"success": False, "error": "Alert not found"}
+
+        # Convert to serializable dict
+        result = dict(row)
+        for key, value in result.items():
+            if isinstance(value, (date, datetime)):
+                result[key] = value.isoformat()
+            elif hasattr(value, "__str__") and key.endswith("_id"):
+                result[key] = str(value) if value else None
+
+        return {"success": True, "alert": result}
 
 
 # =============================================================================
@@ -511,7 +898,7 @@ class SarFilingWorkflow:
 
 @workflow.defn
 class AlertHandlingWorkflow:
-    """Workflow to triage and close alerts"""
+    """Workflow to triage and close alerts (legacy)"""
 
     @workflow.run
     async def run(
@@ -525,7 +912,7 @@ class AlertHandlingWorkflow:
         # Mark as in progress
         await workflow.execute_activity(
             update_alert_status_activity,
-            args=[alert_id, "investigating", f"Workflow started: {action}", resolved_by],
+            args=[alert_id, "in_progress", f"Started: {action}", resolved_by],
             start_to_close_timeout=timedelta(seconds=20),
         )
 
@@ -535,12 +922,138 @@ class AlertHandlingWorkflow:
         # Close the alert
         await workflow.execute_activity(
             update_alert_status_activity,
-            args=[alert_id, "resolved", f"Workflow completed via action '{action}'", resolved_by],
+            args=[alert_id, "resolved", f"Completed via action '{action}'", resolved_by],
             start_to_close_timeout=timedelta(seconds=20),
         )
 
         result["status"] = "resolved"
         return result
+
+
+# =============================================================================
+# ALERT LIFECYCLE WORKFLOW
+# =============================================================================
+
+@workflow.defn
+class AlertLifecycleWorkflow:
+    """
+    Central workflow for all alert lifecycle actions.
+    Validates transitions and executes appropriate activity.
+    """
+
+    @workflow.run
+    async def run(
+        self,
+        alert_id: int,
+        action: str,
+        user_id: str,
+        user_role: str,
+        params: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Execute an alert lifecycle action.
+
+        Args:
+            alert_id: The alert ID
+            action: One of: assign, unassign, start, escalate, hold, resume, resolve, reopen, add_note
+            user_id: The user performing the action
+            user_role: The user's role (analyst, senior_analyst, manager, admin)
+            params: Action-specific parameters
+        """
+        result = {"alert_id": alert_id, "action": action, "user_id": user_id}
+
+        try:
+            if action == "assign":
+                assigned_to = params.get("assigned_to", user_id)
+                assigned_by = params.get("assigned_by")
+                activity_result = await workflow.execute_activity(
+                    assign_alert_activity,
+                    args=[alert_id, assigned_to, assigned_by],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+
+            elif action == "unassign":
+                activity_result = await workflow.execute_activity(
+                    unassign_alert_activity,
+                    args=[alert_id, user_id],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+
+            elif action == "start":
+                activity_result = await workflow.execute_activity(
+                    start_alert_work_activity,
+                    args=[alert_id, user_id],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+
+            elif action == "escalate":
+                escalated_to = params.get("escalated_to")
+                reason = params.get("reason", "Escalated")
+                if not escalated_to:
+                    return {"success": False, "error": "escalated_to is required"}
+                activity_result = await workflow.execute_activity(
+                    escalate_alert_lifecycle_activity,
+                    args=[alert_id, user_id, escalated_to, reason],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+
+            elif action == "hold":
+                reason = params.get("reason")
+                activity_result = await workflow.execute_activity(
+                    hold_alert_activity,
+                    args=[alert_id, user_id, reason],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+
+            elif action == "resume":
+                activity_result = await workflow.execute_activity(
+                    resume_alert_activity,
+                    args=[alert_id, user_id],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+
+            elif action == "resolve":
+                resolution_type = params.get("resolution_type")
+                resolution_notes = params.get("resolution_notes")
+                if not resolution_type:
+                    return {"success": False, "error": "resolution_type is required"}
+                activity_result = await workflow.execute_activity(
+                    resolve_alert_activity,
+                    args=[alert_id, user_id, resolution_type, resolution_notes],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+
+            elif action == "reopen":
+                # Only managers/admins can reopen
+                if user_role not in ('manager', 'admin'):
+                    return {"success": False, "error": "Only managers can reopen alerts"}
+                reason = params.get("reason")
+                activity_result = await workflow.execute_activity(
+                    reopen_alert_activity,
+                    args=[alert_id, user_id, reason],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+
+            elif action == "add_note":
+                content = params.get("content")
+                note_type = params.get("note_type", "comment")
+                if not content:
+                    return {"success": False, "error": "content is required"}
+                activity_result = await workflow.execute_activity(
+                    add_alert_note_activity,
+                    args=[alert_id, user_id, content, note_type],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+
+            else:
+                return {"success": False, "error": f"Unknown action: {action}"}
+
+            result.update(activity_result)
+            return result
+
+        except Exception as e:
+            logger.error(f"Alert lifecycle workflow error: {e}")
+            return {"success": False, "error": str(e)}
 
 
 # =============================================================================
@@ -561,6 +1074,7 @@ async def run_worker() -> None:
             EscalationWorkflow,
             SarFilingWorkflow,
             AlertHandlingWorkflow,
+            AlertLifecycleWorkflow,
         ],
         activities=[
             # Existing activities
@@ -573,6 +1087,17 @@ async def run_worker() -> None:
             request_document_activity,
             perform_sar_checks_activity,
             update_alert_status_activity,
+            # Alert lifecycle activities
+            assign_alert_activity,
+            unassign_alert_activity,
+            start_alert_work_activity,
+            escalate_alert_lifecycle_activity,
+            hold_alert_activity,
+            resume_alert_activity,
+            resolve_alert_activity,
+            reopen_alert_activity,
+            add_alert_note_activity,
+            get_alert_details_activity,
         ],
     )
     logger.info("Starting Temporal worker on queue 'aml-tasks'")

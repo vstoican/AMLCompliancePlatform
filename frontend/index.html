@@ -220,16 +220,61 @@
       <section id="alert-stream" class="panel">
         <div class="panel-head">
           <div>
-            <h2>Alert stream</h2>
-            <p class="muted">Latest 100 alerts triggered by hypertable</p>
+            <h2>Recent Alerts</h2>
+            <p class="muted">Monitor and manage triggered alerts</p>
           </div>
+        </div>
+
+        <!-- Alert Stats -->
+        <div class="grid stats" style="margin-bottom: 20px;">
+          <div class="card">
+            <p class="label">Open Alerts</p>
+            <p id="alertOpenCount" class="metric">-</p>
+            <span class="badge amber">New</span>
+          </div>
+          <div class="card">
+            <p class="label">Assigned</p>
+            <p id="alertAssignedCount" class="metric">-</p>
+            <span class="badge blue">Working</span>
+          </div>
+          <div class="card">
+            <p class="label">Escalated</p>
+            <p id="alertEscalatedCount" class="metric">-</p>
+            <span class="badge red">Urgent</span>
+          </div>
+          <div class="card">
+            <p class="label">Resolved Today</p>
+            <p id="alertResolvedTodayCount" class="metric">-</p>
+            <span class="badge teal">Done</span>
+          </div>
+        </div>
+
+        <!-- Alert Filters -->
+        <div class="panel-filters" style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center;">
+          <input id="alertStreamSearch" type="search" placeholder="Search alerts..." style="flex: 1; min-width: 200px;" />
           <select id="alertStatusFilter2">
-            <option value="">All</option>
+            <option value="">All Statuses</option>
             <option value="open">Open</option>
-            <option value="in_progress">In progress</option>
-            <option value="closed">Closed</option>
+            <option value="assigned">Assigned</option>
+            <option value="in_progress">In Progress</option>
+            <option value="escalated">Escalated</option>
+            <option value="on_hold">On Hold</option>
+            <option value="resolved">Resolved</option>
+          </select>
+          <select id="alertSeverityFilter2">
+            <option value="">All Severities</option>
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="medium">Medium</option>
+            <option value="low">Low</option>
+          </select>
+          <select id="alertAssignedFilter">
+            <option value="">All Assignments</option>
+            <option value="unassigned">Unassigned</option>
+            <option value="me">Assigned to Me</option>
           </select>
         </div>
+
         <div id="alertTable2" class="table"></div>
       </section>
 
@@ -2077,6 +2122,134 @@
         <div style="display: flex; gap: 10px; margin-top: 16px;">
           <button class="btn primary" type="submit" style="flex: 1;">Start Execution</button>
           <button class="btn outline" type="button" onclick="toggleModal(false, 'workflowModal')">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Slide-out Detail Panel -->
+  <div id="detailPanelOverlay" class="panel-overlay hidden" onclick="closeDetailPanel()"></div>
+  <div id="detailPanel" class="slide-panel hidden">
+    <div class="panel-header">
+      <h2 id="panelTitle">Alert Details</h2>
+      <button class="close-btn" onclick="closeDetailPanel()">&times;</button>
+    </div>
+    <div id="panelContent" class="panel-body">
+      <!-- Dynamic content loaded here -->
+    </div>
+    <div id="panelActions" class="panel-footer">
+      <!-- Context-appropriate action buttons -->
+    </div>
+  </div>
+
+  <!-- Alert Assign Modal -->
+  <div id="alertAssignModal" class="modal hidden">
+    <div class="modal-content" style="max-width: 400px;">
+      <h3>Assign Alert</h3>
+      <p class="muted" style="margin-bottom: 16px;">Select a user to assign this alert to</p>
+      <form id="alertAssignForm" onsubmit="submitAlertAssign(event)">
+        <input type="hidden" id="alertAssignId" />
+        <label>
+          Assign to
+          <select id="alertAssignTo" required>
+            <option value="">Select user...</option>
+          </select>
+        </label>
+        <div style="display: flex; gap: 10px; margin-top: 16px;">
+          <button class="btn primary" type="submit" style="flex: 1;">Assign</button>
+          <button class="btn outline" type="button" onclick="closeAlertAssignModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Alert Escalate Modal -->
+  <div id="alertEscalateModal" class="modal hidden">
+    <div class="modal-content" style="max-width: 400px;">
+      <h3>Escalate Alert</h3>
+      <p class="muted" style="margin-bottom: 16px;">Escalate this alert to a senior analyst or manager</p>
+      <form id="alertEscalateForm" onsubmit="submitAlertEscalate(event)">
+        <input type="hidden" id="alertEscalateId" />
+        <label>
+          Escalate to
+          <select id="alertEscalateTo" required>
+            <option value="">Select user...</option>
+          </select>
+        </label>
+        <label style="margin-top: 12px;">
+          Reason
+          <textarea id="alertEscalateReason" rows="3" required placeholder="Describe why this needs escalation..."></textarea>
+        </label>
+        <div style="display: flex; gap: 10px; margin-top: 16px;">
+          <button class="btn primary" type="submit" style="flex: 1;">Escalate</button>
+          <button class="btn outline" type="button" onclick="closeAlertEscalateModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Alert Resolve Modal -->
+  <div id="alertResolveModal" class="modal hidden">
+    <div class="modal-content" style="max-width: 450px;">
+      <h3>Resolve Alert</h3>
+      <p class="muted" style="margin-bottom: 16px;">Confirm the resolution of this alert</p>
+      <form id="alertResolveForm" onsubmit="submitAlertResolve(event)">
+        <input type="hidden" id="alertResolveId" />
+        <label>
+          Resolution Type
+          <select id="alertResolutionType" required onchange="toggleResolutionNotes()">
+            <option value="">Select resolution type...</option>
+            <option value="confirmed_suspicious">Confirmed Suspicious</option>
+            <option value="false_positive">False Positive</option>
+            <option value="not_suspicious">Not Suspicious</option>
+            <option value="duplicate">Duplicate</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+        <label style="margin-top: 12px;">
+          Resolution Notes
+          <textarea id="alertResolutionNotes" rows="3" placeholder="Add notes about the resolution..."></textarea>
+        </label>
+        <div style="display: flex; gap: 10px; margin-top: 16px;">
+          <button class="btn primary" type="submit" style="flex: 1;">Resolve</button>
+          <button class="btn outline" type="button" onclick="closeAlertResolveModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Alert Hold Modal -->
+  <div id="alertHoldModal" class="modal hidden">
+    <div class="modal-content" style="max-width: 400px;">
+      <h3>Put Alert on Hold</h3>
+      <p class="muted" style="margin-bottom: 16px;">Put this alert on hold while waiting for additional information</p>
+      <form id="alertHoldForm" onsubmit="submitAlertHold(event)">
+        <input type="hidden" id="alertHoldId" />
+        <label>
+          Reason (optional)
+          <textarea id="alertHoldReason" rows="3" placeholder="Why is this being put on hold?"></textarea>
+        </label>
+        <div style="display: flex; gap: 10px; margin-top: 16px;">
+          <button class="btn primary" type="submit" style="flex: 1;">Put on Hold</button>
+          <button class="btn outline" type="button" onclick="closeAlertHoldModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Alert Add Note Modal -->
+  <div id="alertNoteModal" class="modal hidden">
+    <div class="modal-content" style="max-width: 450px;">
+      <h3>Add Note</h3>
+      <form id="alertNoteForm" onsubmit="submitAlertNote(event)">
+        <input type="hidden" id="alertNoteAlertId" />
+        <label>
+          Note
+          <textarea id="alertNoteContent" rows="4" required placeholder="Enter your note..."></textarea>
+        </label>
+        <div style="display: flex; gap: 10px; margin-top: 16px;">
+          <button class="btn primary" type="submit" style="flex: 1;">Add Note</button>
+          <button class="btn outline" type="button" onclick="closeAlertNoteModal()">Cancel</button>
         </div>
       </form>
     </div>
