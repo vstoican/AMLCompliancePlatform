@@ -1,6 +1,15 @@
 import os
-import secrets
 from pydantic import BaseModel
+
+
+def _get_jwt_secret() -> str:
+    """Get JWT secret from env or generate one (only for development)."""
+    secret = os.getenv("JWT_SECRET_KEY")
+    if secret:
+        return secret
+    # Fallback for development only - import secrets lazily
+    import secrets
+    return secrets.token_hex(32)
 
 
 class Settings(BaseModel):
@@ -19,7 +28,7 @@ class Settings(BaseModel):
     temporal_port: int = int(os.getenv("TEMPORAL_PORT", "7233"))
 
     # JWT Authentication
-    jwt_secret_key: str = os.getenv("JWT_SECRET_KEY", secrets.token_hex(32))
+    jwt_secret_key: str = os.getenv("JWT_SECRET_KEY", "dev-secret-key-change-in-production")
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
     refresh_token_expire_days: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))

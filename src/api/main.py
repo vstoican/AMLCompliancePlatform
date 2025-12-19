@@ -115,6 +115,62 @@ async def health() -> dict:
     return {"status": "ok", "timestamp": datetime.utcnow()}
 
 
+@app.get("/dashboard/stats")
+async def dashboard_stats(conn: AsyncConnection = Depends(connection)) -> dict:
+    """Get dashboard statistics for the overview page"""
+    async with conn.cursor(row_factory=dict_row) as cur:
+        # Total customers
+        await cur.execute("SELECT COUNT(*) as count FROM customers")
+        total_customers = (await cur.fetchone())["count"]
+
+        # High risk customers
+        await cur.execute("SELECT COUNT(*) as count FROM customers WHERE risk_level = 'high'")
+        high_risk_customers = (await cur.fetchone())["count"]
+
+        # Open alerts (not resolved)
+        await cur.execute(
+            "SELECT COUNT(*) as count FROM alerts WHERE status NOT IN ('resolved')"
+        )
+        open_alerts = (await cur.fetchone())["count"]
+
+        # Pending tasks
+        await cur.execute(
+            "SELECT COUNT(*) as count FROM tasks WHERE status IN ('pending', 'in_progress')"
+        )
+        pending_tasks = (await cur.fetchone())["count"]
+
+        # Total transactions (use approximate count for performance)
+        try:
+            await cur.execute("SELECT approximate_row_count('transactions') as count")
+            total_transactions = (await cur.fetchone())["count"] or 0
+        except Exception:
+            await cur.execute("SELECT COUNT(*) as count FROM transactions")
+            total_transactions = (await cur.fetchone())["count"]
+
+        # Risk distribution
+        await cur.execute("""
+            SELECT
+                COALESCE(SUM(CASE WHEN risk_level = 'low' THEN 1 ELSE 0 END), 0) as low,
+                COALESCE(SUM(CASE WHEN risk_level = 'medium' THEN 1 ELSE 0 END), 0) as medium,
+                COALESCE(SUM(CASE WHEN risk_level = 'high' THEN 1 ELSE 0 END), 0) as high
+            FROM customers
+        """)
+        risk_dist = await cur.fetchone()
+
+    return {
+        "total_customers": total_customers,
+        "high_risk_customers": high_risk_customers,
+        "open_alerts": open_alerts,
+        "pending_tasks": pending_tasks,
+        "total_transactions": total_transactions,
+        "risk_distribution": {
+            "low": risk_dist["low"],
+            "medium": risk_dist["medium"],
+            "high": risk_dist["high"],
+        }
+    }
+
+
 @app.post("/customers", response_model=Customer, status_code=status.HTTP_201_CREATED)
 async def create_customer(
     payload: CustomerCreate, conn: AsyncConnection = Depends(connection)
