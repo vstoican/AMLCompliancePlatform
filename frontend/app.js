@@ -150,7 +150,7 @@ function navigateToProfile() {
   // Close the dropdown
   document.getElementById('userDropdown')?.classList.add('hidden');
   // Navigate to profile panel
-  showPanel('profile');
+  activatePanel('profile', '/profile');
   loadProfileData();
 }
 
@@ -479,7 +479,6 @@ const state = {
 
 // Current user (in production, get from auth)
 let currentUser = null;
-const CURRENT_USER_EMAIL = 'analyst@company.com';
 
 const navButtons = document.querySelectorAll(".nav-item");
 const accordionTriggers = document.querySelectorAll(".accordion-trigger");
@@ -1199,9 +1198,11 @@ function activatePanel(name, path, updateHistory = true) {
     'transactions-alerts': 'Transaction Trends',
     'reports': 'Compliance Reports',
     // Administration
-    'users': 'Users',
+    'users': 'User Management',
     'roles': 'Roles & Permissions',
     'audit-log': 'Audit Log',
+    // User Profile
+    'profile': 'My Profile',
     // Settings
     'settings': 'Settings',
     'webhooks': 'Webhooks',
@@ -1412,14 +1413,77 @@ async function loadTasks() {
   }
 }
 
+// =============================================================================
+// USER MANAGEMENT
+// =============================================================================
+
+let filteredUsers = [];
+let selectedUserId = null;
+
 async function loadUsers() {
   // Load all users (including disabled) for admin view
   const data = await fetchJSON('/users');
   state.users = data ?? [];
-  // Set current user based on email (in production, use auth)
-  if (!currentUser && state.users.length > 0) {
-    currentUser = state.users.find(u => u.email === CURRENT_USER_EMAIL) || state.users[0];
+  filteredUsers = [...state.users];
+
+  // Set currentUser from authUser (the logged-in user)
+  if (authUser && state.users.length > 0) {
+    currentUser = state.users.find(u => u.id === authUser.id) || state.users.find(u => u.email === authUser.email);
+    if (!currentUser) {
+      // Fallback: create currentUser from authUser if not found in users list
+      currentUser = {
+        id: authUser.id,
+        email: authUser.email,
+        full_name: authUser.full_name,
+        role: authUser.role,
+        is_active: true
+      };
+    }
   }
+
+  updateUserStats();
+  renderUsersTable();
+}
+
+function updateUserStats() {
+  const total = state.users.length;
+  const active = state.users.filter(u => u.is_active).length;
+  const admins = state.users.filter(u => u.role === 'admin').length;
+  const disabled = state.users.filter(u => !u.is_active).length;
+
+  const totalEl = document.getElementById('statTotalUsers');
+  const activeEl = document.getElementById('statActiveUsers');
+  const adminEl = document.getElementById('statAdminUsers');
+  const disabledEl = document.getElementById('statDisabledUsers');
+
+  if (totalEl) totalEl.textContent = total;
+  if (activeEl) activeEl.textContent = active;
+  if (adminEl) adminEl.textContent = admins;
+  if (disabledEl) disabledEl.textContent = disabled;
+}
+
+function filterUsers() {
+  const searchTerm = (document.getElementById('userSearchInput')?.value || '').toLowerCase();
+  const roleFilter = document.getElementById('userRoleFilter')?.value || '';
+  const statusFilter = document.getElementById('userStatusFilter')?.value || '';
+
+  filteredUsers = state.users.filter(u => {
+    // Search filter
+    const matchesSearch = !searchTerm ||
+      u.full_name.toLowerCase().includes(searchTerm) ||
+      u.email.toLowerCase().includes(searchTerm);
+
+    // Role filter
+    const matchesRole = !roleFilter || u.role === roleFilter;
+
+    // Status filter
+    const matchesStatus = !statusFilter ||
+      (statusFilter === 'active' && u.is_active) ||
+      (statusFilter === 'disabled' && !u.is_active);
+
+    return matchesSearch && matchesRole && matchesStatus;
+  });
+
   renderUsersTable();
 }
 
@@ -1428,20 +1492,54 @@ function renderUsersTable() {
   if (!tbody) return;
 
   const roleBadge = (role) => {
-    const colors = { admin: 'purple', manager: 'amber', senior_analyst: 'blue', analyst: 'teal' };
+    const colors = { admin: 'purple', manager: 'amber', senior_analyst: 'teal', analyst: 'teal' };
     return colors[role] || 'muted';
   };
 
-  tbody.innerHTML = state.users.map(u => `
-    <tr>
-      <td>${u.full_name}</td>
-      <td>${u.email}</td>
-      <td><span class="badge ${roleBadge(u.role)}">${u.role.replace('_', ' ')}</span></td>
-      <td><span class="badge ${u.is_active ? 'teal' : 'red'}">${u.is_active ? 'Active' : 'Disabled'}</span></td>
+  const roleLabel = (role) => {
+    const labels = { admin: 'Administrator', manager: 'Manager', senior_analyst: 'Senior Analyst', analyst: 'Analyst' };
+    return labels[role] || role;
+  };
+
+  const formatDate = (dateStr) => {
+    if (!dateStr) return 'Never';
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const getInitials = (name) => {
+    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+  };
+
+  if (filteredUsers.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="5" style="text-align: center; padding: 40px; color: var(--muted);">
+          No users found matching your criteria
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = filteredUsers.map(u => `
+    <tr class="user-row" onclick="showUserDetail('${u.id}')" style="cursor: pointer;">
       <td>
-        <div style="display: flex; gap: 6px;">
-          <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;" onclick="showEditUserModal('${u.id}')">Edit</button>
-          <button class="btn ghost" style="padding: 6px 10px; font-size: 13px;${u.is_active ? '' : ' color: var(--primary);'}" onclick="toggleUserStatus('${u.id}', ${!u.is_active})">${u.is_active ? 'Disable' : 'Enable'}</button>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div class="user-avatar" style="width: 40px; height: 40px; font-size: 14px;">${getInitials(u.full_name)}</div>
+          <div>
+            <div style="font-weight: 600;">${u.full_name}</div>
+            <div style="font-size: 13px; color: var(--muted);">${u.email}</div>
+          </div>
+        </div>
+      </td>
+      <td><span class="badge ${roleBadge(u.role)}">${roleLabel(u.role)}</span></td>
+      <td><span class="badge ${u.is_active ? 'teal' : 'red'}">${u.is_active ? 'Active' : 'Disabled'}</span></td>
+      <td style="color: var(--muted); font-size: 13px;">${formatDate(u.last_login)}</td>
+      <td>
+        <div style="display: flex; gap: 6px;" onclick="event.stopPropagation();">
+          <button class="btn ghost small" onclick="showEditUserModal('${u.id}')">Edit</button>
+          <button class="btn ghost small" onclick="showResetPasswordModal('${u.id}')">Reset</button>
         </div>
       </td>
     </tr>
@@ -1455,6 +1553,13 @@ function showEditUserModal(userId = null) {
   const nameEl = document.getElementById('editUserName');
   const emailEl = document.getElementById('editUserEmail');
   const roleEl = document.getElementById('editUserRole');
+  const passwordSection = document.getElementById('passwordSection');
+  const passwordEl = document.getElementById('editUserPassword');
+  const passwordConfirmEl = document.getElementById('editUserPasswordConfirm');
+  const errorEl = document.getElementById('editUserError');
+
+  // Clear previous error
+  if (errorEl) errorEl.style.display = 'none';
 
   if (userId) {
     // Edit existing user
@@ -1465,13 +1570,27 @@ function showEditUserModal(userId = null) {
     nameEl.value = user.full_name;
     emailEl.value = user.email;
     roleEl.value = user.role;
+    // Hide password section for existing users
+    if (passwordSection) passwordSection.style.display = 'none';
+    if (passwordEl) passwordEl.required = false;
+    if (passwordConfirmEl) passwordConfirmEl.required = false;
   } else {
     // New user
-    titleEl.textContent = 'New User';
+    titleEl.textContent = 'Add New User';
     idEl.value = '';
     nameEl.value = '';
     emailEl.value = '';
     roleEl.value = 'analyst';
+    // Show password section for new users
+    if (passwordSection) passwordSection.style.display = 'block';
+    if (passwordEl) {
+      passwordEl.value = '';
+      passwordEl.required = true;
+    }
+    if (passwordConfirmEl) {
+      passwordConfirmEl.value = '';
+      passwordConfirmEl.required = true;
+    }
   }
 
   modal.classList.remove('hidden');
@@ -1481,14 +1600,25 @@ function toggleEditUserModal(show) {
   const modal = document.getElementById('editUserModal');
   if (modal) {
     modal.classList.toggle('hidden', !show);
+    if (!show) {
+      // Reset form when closing
+      document.getElementById('editUserForm')?.reset();
+      const errorEl = document.getElementById('editUserError');
+      if (errorEl) errorEl.style.display = 'none';
+    }
   }
 }
 
-async function saveUser() {
+async function saveUser(event) {
+  if (event) event.preventDefault();
+
   const idEl = document.getElementById('editUserId');
   const nameEl = document.getElementById('editUserName');
   const emailEl = document.getElementById('editUserEmail');
   const roleEl = document.getElementById('editUserRole');
+  const passwordEl = document.getElementById('editUserPassword');
+  const passwordConfirmEl = document.getElementById('editUserPasswordConfirm');
+  const errorEl = document.getElementById('editUserError');
 
   const userId = idEl.value;
   const payload = {
@@ -1497,9 +1627,39 @@ async function saveUser() {
     role: roleEl.value,
   };
 
+  // Clear previous error
+  if (errorEl) errorEl.style.display = 'none';
+
   if (!payload.full_name || !payload.email) {
-    showToast('error', 'Validation error', 'Name and email are required');
+    if (errorEl) {
+      errorEl.textContent = 'Name and email are required';
+      errorEl.style.display = 'block';
+    }
     return;
+  }
+
+  // For new users, validate password
+  if (!userId) {
+    const password = passwordEl?.value || '';
+    const passwordConfirm = passwordConfirmEl?.value || '';
+
+    if (password.length < 8) {
+      if (errorEl) {
+        errorEl.textContent = 'Password must be at least 8 characters';
+        errorEl.style.display = 'block';
+      }
+      return;
+    }
+
+    if (password !== passwordConfirm) {
+      if (errorEl) {
+        errorEl.textContent = 'Passwords do not match';
+        errorEl.style.display = 'block';
+      }
+      return;
+    }
+
+    payload.password = password;
   }
 
   try {
@@ -1519,12 +1679,15 @@ async function saveUser() {
     }
 
     if (result) {
-      showToast('success', userId ? 'User updated' : 'User created', `${payload.full_name} has been saved`);
+      showToast('success', userId ? 'User Updated' : 'User Created', `${payload.full_name} has been saved`);
       toggleEditUserModal(false);
       await loadUsers();
     }
   } catch (error) {
-    showToast('error', 'Save failed', error.message || 'Unable to save user');
+    if (errorEl) {
+      errorEl.textContent = error.message || 'Unable to save user';
+      errorEl.style.display = 'block';
+    }
   }
 }
 
@@ -1544,11 +1707,189 @@ async function toggleUserStatus(userId, newStatus) {
     if (result) {
       showToast('success', `User ${action}d`, `${user.full_name} has been ${action}d`);
       await loadUsers();
+      // Update detail panel if open
+      if (selectedUserId === userId) {
+        showUserDetail(userId);
+      }
     }
   } catch (error) {
     showToast('error', `${action} failed`, error.message || `Unable to ${action} user`);
   }
 }
+
+// User Detail Panel
+function showUserDetail(userId) {
+  const user = state.users.find(u => u.id === userId);
+  if (!user) return;
+
+  selectedUserId = userId;
+
+  const getInitials = (name) => name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+  const formatDate = (dateStr) => {
+    if (!dateStr) return 'N/A';
+    return new Date(dateStr).toLocaleString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+  };
+
+  const roleLabel = (role) => {
+    const labels = { admin: 'Administrator', manager: 'Manager', senior_analyst: 'Senior Analyst', analyst: 'Analyst' };
+    return labels[role] || role;
+  };
+
+  const roleBadge = (role) => {
+    const colors = { admin: 'purple', manager: 'amber', senior_analyst: 'teal', analyst: 'teal' };
+    return colors[role] || 'muted';
+  };
+
+  // Update panel content
+  document.getElementById('userDetailAvatar').textContent = getInitials(user.full_name);
+  document.getElementById('userDetailName').textContent = user.full_name;
+  document.getElementById('userDetailRole').textContent = roleLabel(user.role);
+  document.getElementById('userDetailRole').className = `badge ${roleBadge(user.role)}`;
+  document.getElementById('userDetailStatus').textContent = user.is_active ? 'Active' : 'Disabled';
+  document.getElementById('userDetailStatus').className = `badge ${user.is_active ? 'teal' : 'red'}`;
+  document.getElementById('userDetailEmail').textContent = user.email;
+  document.getElementById('userDetailId').textContent = user.id;
+  document.getElementById('userDetailCreated').textContent = formatDate(user.created_at);
+  document.getElementById('userDetailLastLogin').textContent = formatDate(user.last_login);
+  document.getElementById('userDetailUpdated').textContent = formatDate(user.updated_at);
+
+  // Update toggle button
+  const toggleBtn = document.getElementById('userDetailToggleBtn');
+  if (toggleBtn) {
+    toggleBtn.textContent = user.is_active ? 'Disable User' : 'Enable User';
+    toggleBtn.style.color = user.is_active ? 'var(--red)' : 'var(--primary)';
+  }
+
+  // Show panel
+  document.getElementById('userDetailOverlay').classList.remove('hidden');
+  document.getElementById('userDetailPanel').classList.remove('hidden');
+}
+
+function closeUserDetailPanel() {
+  const overlay = document.getElementById('userDetailOverlay');
+  const panel = document.getElementById('userDetailPanel');
+
+  panel.classList.add('closing');
+  overlay.classList.add('closing');
+
+  setTimeout(() => {
+    panel.classList.add('hidden');
+    panel.classList.remove('closing');
+    overlay.classList.add('hidden');
+    overlay.classList.remove('closing');
+    selectedUserId = null;
+  }, 250);
+}
+
+function editUserFromPanel() {
+  if (selectedUserId) {
+    closeUserDetailPanel();
+    setTimeout(() => showEditUserModal(selectedUserId), 300);
+  }
+}
+
+function resetPasswordFromPanel() {
+  if (selectedUserId) {
+    showResetPasswordModal(selectedUserId);
+  }
+}
+
+function toggleUserFromPanel() {
+  if (selectedUserId) {
+    const user = state.users.find(u => u.id === selectedUserId);
+    if (user) {
+      toggleUserStatus(selectedUserId, !user.is_active);
+    }
+  }
+}
+
+// Reset Password Modal
+function showResetPasswordModal(userId) {
+  const user = state.users.find(u => u.id === userId);
+  if (!user) return;
+
+  document.getElementById('resetPasswordUserId').value = userId;
+  document.getElementById('resetPasswordUserName').textContent = user.full_name;
+  document.getElementById('resetNewPassword').value = '';
+  document.getElementById('resetNewPasswordConfirm').value = '';
+
+  const errorEl = document.getElementById('resetPasswordError');
+  if (errorEl) errorEl.style.display = 'none';
+
+  document.getElementById('resetPasswordModal').classList.remove('hidden');
+}
+
+function toggleResetPasswordModal(show) {
+  const modal = document.getElementById('resetPasswordModal');
+  if (modal) {
+    modal.classList.toggle('hidden', !show);
+    if (!show) {
+      document.getElementById('resetPasswordForm')?.reset();
+    }
+  }
+}
+
+async function resetUserPassword(event) {
+  if (event) event.preventDefault();
+
+  const userId = document.getElementById('resetPasswordUserId').value;
+  const newPassword = document.getElementById('resetNewPassword').value;
+  const confirmPassword = document.getElementById('resetNewPasswordConfirm').value;
+  const errorEl = document.getElementById('resetPasswordError');
+
+  if (errorEl) errorEl.style.display = 'none';
+
+  if (newPassword.length < 8) {
+    if (errorEl) {
+      errorEl.textContent = 'Password must be at least 8 characters';
+      errorEl.style.display = 'block';
+    }
+    return;
+  }
+
+  if (newPassword !== confirmPassword) {
+    if (errorEl) {
+      errorEl.textContent = 'Passwords do not match';
+      errorEl.style.display = 'block';
+    }
+    return;
+  }
+
+  try {
+    await fetchJSON(`/users/${userId}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify({ new_password: newPassword }),
+    });
+
+    const user = state.users.find(u => u.id === userId);
+    showToast('success', 'Password Reset', `Password for ${user?.full_name || 'user'} has been reset`);
+    toggleResetPasswordModal(false);
+  } catch (error) {
+    if (errorEl) {
+      errorEl.textContent = error.message || 'Failed to reset password';
+      errorEl.style.display = 'block';
+    }
+  }
+}
+
+// Initialize user form handlers
+document.addEventListener('DOMContentLoaded', () => {
+  const editUserForm = document.getElementById('editUserForm');
+  if (editUserForm) {
+    editUserForm.addEventListener('submit', saveUser);
+  }
+
+  const resetPasswordForm = document.getElementById('resetPasswordForm');
+  if (resetPasswordForm) {
+    resetPasswordForm.addEventListener('submit', resetUserPassword);
+  }
+});
+
+// =============================================================================
+// END USER MANAGEMENT
+// =============================================================================
 
 async function loadAlertDefinitions() {
   const data = await fetchJSON("/alert-definitions");
@@ -5769,6 +6110,15 @@ window.showEditUserModal = showEditUserModal;
 window.toggleEditUserModal = toggleEditUserModal;
 window.saveUser = saveUser;
 window.toggleUserStatus = toggleUserStatus;
+window.filterUsers = filterUsers;
+window.showUserDetail = showUserDetail;
+window.closeUserDetailPanel = closeUserDetailPanel;
+window.editUserFromPanel = editUserFromPanel;
+window.resetPasswordFromPanel = resetPasswordFromPanel;
+window.toggleUserFromPanel = toggleUserFromPanel;
+window.showResetPasswordModal = showResetPasswordModal;
+window.toggleResetPasswordModal = toggleResetPasswordModal;
+window.resetUserPassword = resetUserPassword;
 
 // =============================================================================
 // AI ASSISTANT
@@ -6030,3 +6380,74 @@ window.testAIConnection = testAIConnection;
 
 // Load AI settings on startup
 loadAISettings();
+
+// ========================================
+// Slide Panel Resize functionality
+// ========================================
+
+(function initializePanelResize() {
+  const SIDEBAR_WIDTH = 260; // Width of the sidebar
+  const MIN_PANEL_WIDTH = 400;
+
+  document.querySelectorAll('.slide-panel-resize').forEach(handle => {
+    let isResizing = false;
+    let panel = handle.parentElement;
+
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      isResizing = true;
+      document.body.style.cursor = 'ew-resize';
+      document.body.style.userSelect = 'none';
+
+      const startX = e.clientX;
+      const startWidth = panel.offsetWidth;
+
+      function onMouseMove(e) {
+        if (!isResizing) return;
+
+        // Calculate new width (dragging left increases width since panel is on right)
+        const delta = startX - e.clientX;
+        let newWidth = startWidth + delta;
+
+        // Constrain to min and max
+        const maxWidth = window.innerWidth - SIDEBAR_WIDTH;
+        newWidth = Math.max(MIN_PANEL_WIDTH, Math.min(newWidth, maxWidth));
+
+        panel.style.width = newWidth + 'px';
+      }
+
+      function onMouseUp() {
+        isResizing = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+
+        // Save the width preference
+        localStorage.setItem('slidePanelWidth', panel.style.width);
+      }
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+
+    // Visual feedback on hover
+    handle.addEventListener('mouseenter', () => {
+      handle.style.background = 'var(--border)';
+    });
+
+    handle.addEventListener('mouseleave', () => {
+      if (!handle.matches(':active')) {
+        handle.style.background = 'transparent';
+      }
+    });
+  });
+
+  // Restore saved width on page load
+  const savedWidth = localStorage.getItem('slidePanelWidth');
+  if (savedWidth) {
+    document.querySelectorAll('.slide-panel').forEach(panel => {
+      panel.style.width = savedWidth;
+    });
+  }
+})();

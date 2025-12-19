@@ -1404,20 +1404,70 @@
       <section id="users" class="panel">
         <div class="panel-head">
           <div>
-            <h2>Users</h2>
-            <p class="muted">Manage system users and access controls</p>
+            <h2>User Management</h2>
+            <p class="muted">Manage system users, roles, and access controls</p>
           </div>
-          <button class="btn primary" onclick="showEditUserModal()">New User</button>
+          <button class="btn primary" onclick="showEditUserModal()">
+            <span style="margin-right: 6px;">+</span> Add User
+          </button>
         </div>
-        <div class="card">
-          <table>
+
+        <!-- User Stats -->
+        <div class="grid stats" style="margin-bottom: 18px;">
+          <div class="card">
+            <p class="label">Total Users</p>
+            <p id="statTotalUsers" class="metric">-</p>
+          </div>
+          <div class="card">
+            <p class="label">Active Users</p>
+            <p id="statActiveUsers" class="metric">-</p>
+            <span class="badge teal">Online</span>
+          </div>
+          <div class="card">
+            <p class="label">Administrators</p>
+            <p id="statAdminUsers" class="metric">-</p>
+            <span class="badge purple">Admin</span>
+          </div>
+          <div class="card">
+            <p class="label">Disabled Accounts</p>
+            <p id="statDisabledUsers" class="metric">-</p>
+            <span class="badge red">Inactive</span>
+          </div>
+        </div>
+
+        <!-- Search and Filter -->
+        <div class="card" style="margin-bottom: 18px; padding: 16px;">
+          <div style="display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+            <div style="flex: 1; min-width: 200px;">
+              <input type="text" id="userSearchInput" placeholder="Search users by name or email..."
+                     style="width: 100%; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg);"
+                     oninput="filterUsers()">
+            </div>
+            <select id="userRoleFilter" onchange="filterUsers()" style="padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg);">
+              <option value="">All Roles</option>
+              <option value="admin">Admin</option>
+              <option value="manager">Manager</option>
+              <option value="senior_analyst">Senior Analyst</option>
+              <option value="analyst">Analyst</option>
+            </select>
+            <select id="userStatusFilter" onchange="filterUsers()" style="padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg);">
+              <option value="">All Status</option>
+              <option value="active">Active</option>
+              <option value="disabled">Disabled</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Users Table -->
+        <div class="card" style="padding: 0; overflow: hidden;">
+          <table class="users-table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th>Email</th>
-                <th>Role</th>
-                <th>Status</th>
-                <th>Actions</th>
+                <th style="width: 30%;">User</th>
+                <th style="width: 20%;">Role</th>
+                <th style="width: 15%;">Status</th>
+                <th style="width: 20%;">Last Login</th>
+                <th style="width: 15%;">Actions</th>
               </tr>
             </thead>
             <tbody id="usersTableBody">
@@ -1429,34 +1479,139 @@
 
       <!-- Edit User Modal -->
       <div id="editUserModal" class="modal hidden">
-        <div class="modal-content" style="max-width: 450px;">
-          <div style="padding: 20px;">
-            <h3 id="editUserModalTitle" style="margin-top: 0;">Edit User</h3>
+        <div class="modal-content" style="max-width: 500px;">
+          <div class="modal-head">
+            <h3 id="editUserModalTitle">Edit User</h3>
+            <button class="btn icon" onclick="toggleEditUserModal(false)">&times;</button>
+          </div>
+          <form id="editUserForm" class="form" style="padding: 0 20px 20px 20px;">
             <input type="hidden" id="editUserId">
-            <div style="display: grid; gap: 16px;">
-              <div>
-                <label class="label">Full Name</label>
-                <input type="text" id="editUserName" class="input" style="width: 100%;" placeholder="Enter full name">
-              </div>
-              <div>
-                <label class="label">Email</label>
-                <input type="email" id="editUserEmail" class="input" style="width: 100%;" placeholder="Enter email">
-              </div>
-              <div>
-                <label class="label">Role</label>
-                <select id="editUserRole" class="input" style="width: 100%;">
-                  <option value="analyst">Analyst</option>
-                  <option value="senior_analyst">Senior Analyst</option>
-                  <option value="manager">Manager</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </div>
+
+            <label>
+              Full Name <span style="color: var(--red);">*</span>
+              <input type="text" id="editUserName" required minlength="2" placeholder="Enter full name">
+            </label>
+
+            <label>
+              Email Address <span style="color: var(--red);">*</span>
+              <input type="email" id="editUserEmail" required placeholder="Enter email address">
+            </label>
+
+            <label>
+              Role <span style="color: var(--red);">*</span>
+              <select id="editUserRole" required>
+                <option value="analyst">Analyst</option>
+                <option value="senior_analyst">Senior Analyst</option>
+                <option value="manager">Manager</option>
+                <option value="admin">Administrator</option>
+              </select>
+            </label>
+
+            <!-- Password section (only for new users) -->
+            <div id="passwordSection">
+              <label>
+                Password <span style="color: var(--red);">*</span>
+                <input type="password" id="editUserPassword" minlength="8" placeholder="Minimum 8 characters">
+              </label>
+              <label>
+                Confirm Password <span style="color: var(--red);">*</span>
+                <input type="password" id="editUserPasswordConfirm" minlength="8" placeholder="Confirm password">
+              </label>
             </div>
-            <div style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px;">
-              <button class="btn ghost" onclick="toggleEditUserModal(false)">Cancel</button>
-              <button class="btn primary" onclick="saveUser()">Save</button>
+
+            <p id="editUserError" class="profile-error" style="display: none;"></p>
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
+              <button type="button" class="btn ghost" onclick="toggleEditUserModal(false)">Cancel</button>
+              <button type="submit" class="btn primary">Save User</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Reset Password Modal -->
+      <div id="resetPasswordModal" class="modal hidden">
+        <div class="modal-content" style="max-width: 450px;">
+          <div class="modal-head">
+            <h3>Reset Password</h3>
+            <button class="btn icon" onclick="toggleResetPasswordModal(false)">&times;</button>
+          </div>
+          <form id="resetPasswordForm" class="form" style="padding: 0 20px 20px 20px;">
+            <input type="hidden" id="resetPasswordUserId">
+            <p class="muted" style="margin-bottom: 16px;">
+              Set a new password for <strong id="resetPasswordUserName">User</strong>
+            </p>
+
+            <label>
+              New Password <span style="color: var(--red);">*</span>
+              <input type="password" id="resetNewPassword" required minlength="8" placeholder="Minimum 8 characters">
+            </label>
+
+            <label>
+              Confirm Password <span style="color: var(--red);">*</span>
+              <input type="password" id="resetNewPasswordConfirm" required minlength="8" placeholder="Confirm password">
+            </label>
+
+            <p id="resetPasswordError" class="profile-error" style="display: none;"></p>
+
+            <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border);">
+              <button type="button" class="btn ghost" onclick="toggleResetPasswordModal(false)">Cancel</button>
+              <button type="submit" class="btn primary">Reset Password</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- User Detail Panel -->
+      <div id="userDetailOverlay" class="panel-overlay hidden" onclick="closeUserDetailPanel()"></div>
+      <div id="userDetailPanel" class="slide-panel hidden">
+        <div class="slide-panel-resize"></div>
+        <div class="panel-header">
+          <h2>User Details</h2>
+          <button class="close-btn" onclick="closeUserDetailPanel()">&times;</button>
+        </div>
+        <div class="panel-body">
+          <div class="profile-header" style="padding-bottom: 20px; border-bottom: 1px solid var(--border);">
+            <div id="userDetailAvatar" class="profile-avatar-large">--</div>
+            <div class="profile-header-info">
+              <h2 id="userDetailName">Loading...</h2>
+              <span id="userDetailRole" class="badge purple">-</span>
+              <span id="userDetailStatus" class="badge teal" style="margin-left: 8px;">Active</span>
             </div>
           </div>
+
+          <div class="panel-section" style="margin-top: 20px;">
+            <h4>Contact Information</h4>
+            <div class="panel-row">
+              <span class="label">Email</span>
+              <span id="userDetailEmail">-</span>
+            </div>
+            <div class="panel-row">
+              <span class="label">User ID</span>
+              <span id="userDetailId" style="font-family: monospace; font-size: 12px;">-</span>
+            </div>
+          </div>
+
+          <div class="panel-section" style="margin-top: 20px;">
+            <h4>Account Information</h4>
+            <div class="panel-row">
+              <span class="label">Created</span>
+              <span id="userDetailCreated">-</span>
+            </div>
+            <div class="panel-row">
+              <span class="label">Last Login</span>
+              <span id="userDetailLastLogin">-</span>
+            </div>
+            <div class="panel-row">
+              <span class="label">Last Updated</span>
+              <span id="userDetailUpdated">-</span>
+            </div>
+          </div>
+        </div>
+        <div class="panel-footer">
+          <button class="btn outline" onclick="editUserFromPanel()">Edit User</button>
+          <button class="btn outline" onclick="resetPasswordFromPanel()">Reset Password</button>
+          <button id="userDetailToggleBtn" class="btn outline" style="color: var(--red);" onclick="toggleUserFromPanel()">Disable User</button>
         </div>
       </div>
 
@@ -2392,6 +2547,7 @@
   <!-- Slide-out Detail Panel -->
   <div id="detailPanelOverlay" class="panel-overlay hidden" onclick="closeDetailPanel()"></div>
   <div id="detailPanel" class="slide-panel hidden">
+    <div class="slide-panel-resize"></div>
     <div class="panel-header">
       <h2 id="panelTitle">Alert Details</h2>
     </div>
