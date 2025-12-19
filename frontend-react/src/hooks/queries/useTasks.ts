@@ -2,14 +2,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/lib/api'
 import type { Task, TaskFilters } from '@/types/task'
 
-interface TasksResponse {
-  tasks: Task[]
-  total: number
-  page: number
-  page_size: number
-  total_pages: number
-}
-
 interface UseTasksOptions extends TaskFilters {
   page?: number
   pageSize?: number
@@ -26,8 +18,15 @@ export function useTasks(options?: UseTasksOptions) {
       if (options?.priority) params.append('priority', options.priority)
       if (options?.assigned_to) params.append('assigned_to', options.assigned_to)
 
-      const { data } = await api.get<TasksResponse>(`/tasks?${params}`)
-      return data
+      const { data } = await api.get<Task[]>(`/tasks?${params}`)
+      // API returns array directly, wrap it for consistency
+      return {
+        tasks: data,
+        total: data.length,
+        page: options?.page ?? 1,
+        pageSize: options?.pageSize ?? 20,
+        totalPages: 1,
+      }
     },
   })
 }
@@ -63,7 +62,7 @@ export function useUpdateTask() {
 
   return useMutation({
     mutationFn: async ({ id, ...task }: Partial<Task> & { id: number }) => {
-      const { data } = await api.put<Task>(`/tasks/${id}`, task)
+      const { data } = await api.patch<Task>(`/tasks/${id}`, task)
       return data
     },
     onSuccess: (_, variables) => {

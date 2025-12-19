@@ -69,7 +69,7 @@ export function AlertFilters({ filters, onFiltersChange }: AlertFiltersProps) {
           <SelectItem value="all">All Status</SelectItem>
           <SelectItem value="open">Open</SelectItem>
           <SelectItem value="assigned">Assigned</SelectItem>
-          <SelectItem value="investigating">Investigating</SelectItem>
+          <SelectItem value="in_progress">In Progress</SelectItem>
           <SelectItem value="escalated">Escalated</SelectItem>
           <SelectItem value="on_hold">On Hold</SelectItem>
           <SelectItem value="resolved">Resolved</SelectItem>

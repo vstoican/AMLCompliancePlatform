@@ -1,11 +1,20 @@
 "use client"
 
-import { useState } from 'react'
-import { Users, Plus, RefreshCw } from 'lucide-react'
+import { useState, useMemo } from 'react'
+import { Users, Plus, RefreshCw, Search, Shield, UserCheck, UserX } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { UserTable, UserForm, ResetPasswordModal } from '@/components/users'
-import { PageHeader, ConfirmDialog } from '@/components/shared'
+import { PageHeader, ConfirmDialog, StatsCard } from '@/components/shared'
 import { useUsers, useCreateUser, useUpdateUser, useDeleteUser, useResetPassword } from '@/hooks/queries'
 import { useAuthStore } from '@/stores/authStore'
 import type { User } from '@/types/user'
@@ -18,11 +27,52 @@ export default function UsersPage() {
   const [resetPasswordUser, setResetPasswordUser] = useState<User | null>(null)
   const [deleteUser, setDeleteUser] = useState<User | null>(null)
 
+  // Filters
+  const [searchQuery, setSearchQuery] = useState('')
+  const [roleFilter, setRoleFilter] = useState<string>('all')
+  const [statusFilter, setStatusFilter] = useState<string>('all')
+
   const { data, isLoading, refetch } = useUsers()
   const createUser = useCreateUser()
   const updateUser = useUpdateUser()
   const deleteUserMutation = useDeleteUser()
   const resetPassword = useResetPassword()
+
+  // Calculate stats
+  const stats = useMemo(() => {
+    const users = data?.users || []
+    return {
+      total: users.length,
+      active: users.filter(u => u.is_active).length,
+      admins: users.filter(u => u.role === 'admin').length,
+      disabled: users.filter(u => !u.is_active).length,
+    }
+  }, [data?.users])
+
+  // Filter users
+  const filteredUsers = useMemo(() => {
+    let users = data?.users || []
+
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase()
+      users = users.filter(u =>
+        u.full_name.toLowerCase().includes(query) ||
+        u.email.toLowerCase().includes(query)
+      )
+    }
+
+    if (roleFilter && roleFilter !== 'all') {
+      users = users.filter(u => u.role === roleFilter)
+    }
+
+    if (statusFilter && statusFilter !== 'all') {
+      users = users.filter(u =>
+        statusFilter === 'active' ? u.is_active : !u.is_active
+      )
+    }
+
+    return users
+  }, [data?.users, searchQuery, roleFilter, statusFilter])
 
   const handleCreateNew = () => {
     setSelectedUser(null)
@@ -86,8 +136,8 @@ export default function UsersPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Users"
-        description="Manage system users and their roles"
+        title="User Management"
+        description="Manage system users, roles, and access controls"
         icon={Users}
       >
         <Button variant="outline" size="sm" onClick={() => refetch()}>
@@ -100,14 +150,97 @@ export default function UsersPage() {
         </Button>
       </PageHeader>
 
-      <UserTable
-        users={data?.users || []}
-        isLoading={isLoading}
-        onEdit={handleEdit}
-        onResetPassword={setResetPasswordUser}
-        onDelete={setDeleteUser}
-        currentUserId={currentUser?.id}
-      />
+      {/* Stats */}
+      <div className="grid gap-4 md:grid-cols-4">
+        <StatsCard
+          title="Total Users"
+          value={stats.total}
+          icon={Users}
+        />
+        <StatsCard
+          title="Active Users"
+          value={stats.active}
+          icon={UserCheck}
+          trend={{ value: stats.active, isPositive: true }}
+        />
+        <StatsCard
+          title="Administrators"
+          value={stats.admins}
+          icon={Shield}
+        />
+        <StatsCard
+          title="Disabled Accounts"
+          value={stats.disabled}
+          icon={UserX}
+          trend={stats.disabled > 0 ? { value: stats.disabled, isPositive: false } : undefined}
+        />
+      </div>
+
+      {/* Filters */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Search & Filter</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-4">
+            <div className="flex-1 min-w-[200px]">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search users by name or email..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+            </div>
+            <Select value={roleFilter} onValueChange={setRoleFilter}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder="All Roles" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Roles</SelectItem>
+                <SelectItem value="admin">Admin</SelectItem>
+                <SelectItem value="manager">Manager</SelectItem>
+                <SelectItem value="senior_analyst">Senior Analyst</SelectItem>
+                <SelectItem value="analyst">Analyst</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[150px]">
+                <SelectValue placeholder="All Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="disabled">Disabled</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Users Table */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">Users</CardTitle>
+            <span className="text-sm text-muted-foreground">
+              {filteredUsers.length} of {stats.total} users
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <UserTable
+            users={filteredUsers}
+            isLoading={isLoading}
+            onEdit={handleEdit}
+            onResetPassword={setResetPasswordUser}
+            onDelete={setDeleteUser}
+            currentUserId={currentUser?.id}
+          />
+        </CardContent>
+      </Card>
 
       <UserForm
         user={selectedUser}

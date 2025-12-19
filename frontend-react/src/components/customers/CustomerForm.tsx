@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -66,18 +67,36 @@ export function CustomerForm({
   const form = useForm<CustomerFormData>({
     resolver: zodResolver(customerSchema),
     defaultValues: {
-      first_name: customer?.first_name || '',
-      last_name: customer?.last_name || '',
-      email: customer?.email || '',
-      phone_number: customer?.phone_number || '',
-      status: customer?.status || 'PENDING',
-      identity_number: customer?.identity_number || '',
-      country_of_birth: customer?.country_of_birth || '',
-      address_city: customer?.address_city || '',
-      pep_flag: customer?.pep_flag || false,
-      sanctions_hit: customer?.sanctions_hit || false,
+      first_name: '',
+      last_name: '',
+      email: '',
+      phone_number: '',
+      status: 'PENDING',
+      identity_number: '',
+      country_of_birth: '',
+      address_city: '',
+      pep_flag: false,
+      sanctions_hit: false,
     },
   })
+
+  // Reset form when customer prop changes or dialog opens
+  useEffect(() => {
+    if (open) {
+      form.reset({
+        first_name: customer?.first_name || '',
+        last_name: customer?.last_name || '',
+        email: customer?.email || '',
+        phone_number: customer?.phone_number || '',
+        status: customer?.status || 'PENDING',
+        identity_number: customer?.identity_number || '',
+        country_of_birth: customer?.country_of_birth || '',
+        address_city: customer?.address_city || '',
+        pep_flag: customer?.pep_flag || false,
+        sanctions_hit: customer?.sanctions_hit || false,
+      })
+    }
+  }, [customer, open, form])
 
   const handleSubmit = async (data: CustomerFormData) => {
     await onSubmit(data)

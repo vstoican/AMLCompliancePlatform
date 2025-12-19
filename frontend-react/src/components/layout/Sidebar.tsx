@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   ClipboardList,
   Shield,
+  ShieldCheck,
   GitBranch,
   History,
   FileText,
@@ -76,6 +77,7 @@ const navSections: NavSection[] = [
     defaultOpen: false,
     items: [
       { title: 'Users', href: '/users', icon: UserCog },
+      { title: 'Roles & Permissions', href: '/roles', icon: ShieldCheck },
       { title: 'API Keys', href: '/api-keys', icon: Key },
       { title: 'Webhooks', href: '/webhooks', icon: Webhook },
       { title: 'Data Export', href: '/data-export', icon: Download },

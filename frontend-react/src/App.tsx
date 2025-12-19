@@ -14,6 +14,7 @@ import TransactionsPage from '@/pages/TransactionsPage'
 import AlertsPage from '@/pages/AlertsPage'
 import TasksPage from '@/pages/TasksPage'
 import UsersPage from '@/pages/UsersPage'
+import RolesPage from '@/pages/RolesPage'
 import AlertDefinitionsPage from '@/pages/AlertDefinitionsPage'
 import WorkflowsPage from '@/pages/WorkflowsPage'
 import WorkflowHistoryPage from '@/pages/WorkflowHistoryPage'
@@ -139,6 +140,7 @@ function App() {
 
               {/* Administration */}
               <Route path="/users" element={<UsersPage />} />
+              <Route path="/roles" element={<RolesPage />} />
               <Route path="/api-keys" element={<ApiKeysPage />} />
               <Route path="/webhooks" element={<WebhooksPage />} />
               <Route path="/data-export" element={<DataExportPage />} />

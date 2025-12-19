@@ -2,17 +2,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/lib/api'
 import type { User } from '@/types/user'
 
-interface UsersResponse {
-  users: User[]
-  total: number
-}
-
 export function useUsers() {
   return useQuery({
     queryKey: ['users'],
     queryFn: async () => {
-      const { data } = await api.get<UsersResponse>('/users')
-      return data
+      const { data } = await api.get<User[]>('/users')
+      // API returns array directly, wrap it for consistency
+      return { users: data, total: data.length }
     },
   })
 }
@@ -48,7 +44,7 @@ export function useUpdateUser() {
 
   return useMutation({
     mutationFn: async ({ id, ...user }: Partial<User> & { id: string }) => {
-      const { data } = await api.put<User>(`/users/${id}`, user)
+      const { data } = await api.patch<User>(`/users/${id}`, user)
       return data
     },
     onSuccess: (_, variables) => {

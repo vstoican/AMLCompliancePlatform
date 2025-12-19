@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
@@ -66,13 +67,26 @@ export function UserForm({
           })
     ),
     defaultValues: {
-      email: user?.email || '',
-      full_name: user?.full_name || '',
-      role: user?.role || 'analyst',
-      is_active: user?.is_active ?? true,
+      email: '',
+      full_name: '',
+      role: 'analyst',
+      is_active: true,
       password: '',
     },
   })
+
+  // Reset form when user prop changes or dialog opens
+  useEffect(() => {
+    if (open) {
+      form.reset({
+        email: user?.email || '',
+        full_name: user?.full_name || '',
+        role: user?.role || 'analyst',
+        is_active: user?.is_active ?? true,
+        password: '',
+      })
+    }
+  }, [user, open, form])
 
   const handleSubmit = (data: UserFormData) => {
     onSubmit(data)
