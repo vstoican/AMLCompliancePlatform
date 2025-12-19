@@ -34,6 +34,7 @@ from .models import (
     TransactionCreate,
 )
 from .risk import calculate_risk
+from .auth import router as auth_router
 from .streaming import router as streaming_router
 from .tasks import router as tasks_router, definition_router as task_definitions_router
 from .users import router as users_router
@@ -49,6 +50,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Register authentication router
+app.include_router(auth_router)
 
 # Register SSE streaming router
 app.include_router(streaming_router)

@@ -18,6 +18,7 @@ services:
       - S3_BUCKET=aml-attachments
       - S3_REGION=us-east-1
       - MCP_POSTGRES_URL=http://mcp-postgres:3100
+      - JWT_SECRET_KEY=aml-dev-secret-key-change-in-production-min-32-chars
     ports:
       - "8000:8000"
     depends_on:

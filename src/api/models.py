@@ -388,6 +388,7 @@ class UserCreate(BaseModel):
     email: str
     full_name: str
     role: str = "analyst"
+    password: str  # Required for new users
 
 
 class UserUpdate(BaseModel):
@@ -395,6 +396,10 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+
+
+class ResetPasswordRequest(BaseModel):
+    new_password: str
 
 
 # =============================================================================

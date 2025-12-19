@@ -1,5 +1,421 @@
 const API_BASE = window.API_BASE || "http://localhost:8000";
 
+// =============================================================================
+// AUTHENTICATION
+// =============================================================================
+
+// Token storage
+let accessToken = localStorage.getItem('accessToken');
+let refreshToken = localStorage.getItem('refreshToken');
+let authUser = JSON.parse(localStorage.getItem('authUser') || 'null');
+
+function isAuthenticated() {
+  return !!accessToken;
+}
+
+function getTokenExpiry(token) {
+  if (!token) return 0;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return payload.exp * 1000; // Convert to milliseconds
+  } catch {
+    return 0;
+  }
+}
+
+function isTokenExpired(token) {
+  const expiry = getTokenExpiry(token);
+  return Date.now() >= expiry - 60000; // Consider expired 1 minute before actual expiry
+}
+
+async function refreshAccessToken() {
+  if (!refreshToken) return false;
+
+  try {
+    const res = await fetch(`${API_BASE}/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!res.ok) {
+      logout();
+      return false;
+    }
+
+    const data = await res.json();
+    accessToken = data.access_token;
+    localStorage.setItem('accessToken', accessToken);
+    return true;
+  } catch (err) {
+    console.error('Token refresh failed:', err);
+    logout();
+    return false;
+  }
+}
+
+async function login(email, password) {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+
+  if (!res.ok) {
+    const error = await res.json();
+    throw new Error(error.detail || 'Login failed');
+  }
+
+  const data = await res.json();
+  accessToken = data.access_token;
+  refreshToken = data.refresh_token;
+
+  localStorage.setItem('accessToken', accessToken);
+  localStorage.setItem('refreshToken', refreshToken);
+
+  // Fetch user info
+  const userRes = await fetch(`${API_BASE}/auth/me`, {
+    headers: { 'Authorization': `Bearer ${accessToken}` },
+  });
+
+  if (userRes.ok) {
+    authUser = await userRes.json();
+    localStorage.setItem('authUser', JSON.stringify(authUser));
+  }
+
+  return authUser;
+}
+
+function logout() {
+  // Revoke refresh token on server
+  if (refreshToken) {
+    fetch(`${API_BASE}/auth/logout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    }).catch(() => {}); // Ignore errors
+  }
+
+  accessToken = null;
+  refreshToken = null;
+  authUser = null;
+
+  localStorage.removeItem('accessToken');
+  localStorage.removeItem('refreshToken');
+  localStorage.removeItem('authUser');
+
+  showLoginScreen();
+}
+
+function showLoginScreen() {
+  document.getElementById('loginOverlay').classList.remove('hidden');
+  document.querySelector('.app-shell').style.display = 'none';
+  document.getElementById('loginError').style.display = 'none';
+  document.getElementById('loginEmail').value = '';
+  document.getElementById('loginPassword').value = '';
+}
+
+function hideLoginScreen() {
+  document.getElementById('loginOverlay').classList.add('hidden');
+  document.querySelector('.app-shell').style.display = 'grid';
+}
+
+function updateUserDisplay() {
+  const userMenuContainer = document.getElementById('userMenuContainer');
+  if (userMenuContainer && authUser) {
+    const initials = authUser.full_name.split(' ').map(n => n[0]).join('').toUpperCase();
+    userMenuContainer.innerHTML = `
+      <div class="user-menu" onclick="toggleUserDropdown(event)">
+        <div class="user-avatar">${initials}</div>
+        <div class="user-info">
+          <span class="user-name">${authUser.full_name}</span>
+          <span class="user-role">${authUser.role}</span>
+        </div>
+        <span class="user-chevron">▾</span>
+      </div>
+      <div id="userDropdown" class="user-dropdown hidden">
+        <button onclick="navigateToProfile()" class="btn ghost dropdown-item">
+          <span class="dropdown-icon">👤</span> My Profile
+        </button>
+        <div class="dropdown-divider"></div>
+        <button onclick="logout()" class="btn ghost dropdown-item dropdown-item-danger">
+          <span class="dropdown-icon">🚪</span> Sign Out
+        </button>
+      </div>
+    `;
+  }
+}
+
+function navigateToProfile() {
+  // Close the dropdown
+  document.getElementById('userDropdown')?.classList.add('hidden');
+  // Navigate to profile panel
+  showPanel('profile');
+  loadProfileData();
+}
+
+function toggleUserDropdown(event) {
+  event.stopPropagation();
+  const dropdown = document.getElementById('userDropdown');
+  if (dropdown) {
+    dropdown.classList.toggle('hidden');
+  }
+}
+
+// Close user dropdown when clicking outside
+document.addEventListener('click', (e) => {
+  const dropdown = document.getElementById('userDropdown');
+  const userMenu = document.querySelector('.user-menu');
+  if (dropdown && !dropdown.classList.contains('hidden')) {
+    if (!userMenu?.contains(e.target) && !dropdown.contains(e.target)) {
+      dropdown.classList.add('hidden');
+    }
+  }
+});
+
+// Initialize login form handler
+document.addEventListener('DOMContentLoaded', () => {
+  const loginForm = document.getElementById('loginForm');
+  if (loginForm) {
+    loginForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const email = document.getElementById('loginEmail').value;
+      const password = document.getElementById('loginPassword').value;
+      const errorDiv = document.getElementById('loginError');
+      const btnText = document.getElementById('loginBtnText');
+      const spinner = document.getElementById('loginSpinner');
+
+      // Show loading state
+      btnText.textContent = 'Signing in...';
+      spinner.style.display = 'inline-block';
+      errorDiv.style.display = 'none';
+
+      try {
+        await login(email, password);
+        hideLoginScreen();
+        updateUserDisplay();
+        initApp();
+        showToast('success', 'Welcome back!', `Logged in as ${authUser.full_name}`);
+      } catch (err) {
+        errorDiv.textContent = err.message;
+        errorDiv.style.display = 'block';
+      } finally {
+        btnText.textContent = 'Sign In';
+        spinner.style.display = 'none';
+      }
+    });
+  }
+
+  // Check authentication on page load
+  if (isAuthenticated()) {
+    if (isTokenExpired(accessToken)) {
+      // Try to refresh
+      refreshAccessToken().then(success => {
+        if (success) {
+          hideLoginScreen();
+          updateUserDisplay();
+          initApp();
+        } else {
+          showLoginScreen();
+        }
+      });
+    } else {
+      hideLoginScreen();
+      updateUserDisplay();
+      initApp();
+    }
+  } else {
+    showLoginScreen();
+  }
+});
+
+// =============================================================================
+// END AUTHENTICATION
+// =============================================================================
+
+// =============================================================================
+// PROFILE MANAGEMENT
+// =============================================================================
+
+let profileData = null;
+
+async function loadProfileData() {
+  try {
+    // Fetch full profile from API
+    const response = await fetchJSON('/auth/me');
+    profileData = response;
+
+    // Update profile avatar and header
+    const initials = response.full_name.split(' ').map(n => n[0]).join('').toUpperCase();
+    document.getElementById('profileAvatar').textContent = initials;
+    document.getElementById('profileName').textContent = response.full_name;
+    document.getElementById('profileRole').textContent = response.role;
+
+    // Populate form fields
+    document.getElementById('profileFullName').value = response.full_name;
+    document.getElementById('profileEmail').value = response.email;
+    document.getElementById('profileRoleInput').value = response.role;
+
+    // Update account details
+    document.getElementById('profileUserId').textContent = response.id;
+    document.getElementById('profileStatus').textContent = response.is_active ? 'Active' : 'Inactive';
+    document.getElementById('profileStatus').className = response.is_active ? 'badge teal' : 'badge red';
+
+    // Note: last_login and created_at would need to be added to the API response
+    // For now, show placeholder values
+    document.getElementById('profileLastLogin').textContent = 'Just now';
+    document.getElementById('profileCreatedAt').textContent = '-';
+
+  } catch (error) {
+    console.error('Failed to load profile:', error);
+    showToast('error', 'Error', 'Failed to load profile data');
+  }
+}
+
+function resetProfileForm() {
+  if (profileData) {
+    document.getElementById('profileFullName').value = profileData.full_name;
+    document.getElementById('profileEmail').value = profileData.email;
+  }
+  document.getElementById('profileSuccess').style.display = 'none';
+  document.getElementById('profileError').style.display = 'none';
+}
+
+async function updateProfile(fullName, email) {
+  const successEl = document.getElementById('profileSuccess');
+  const errorEl = document.getElementById('profileError');
+
+  successEl.style.display = 'none';
+  errorEl.style.display = 'none';
+
+  try {
+    const body = {};
+    if (fullName !== profileData.full_name) body.full_name = fullName;
+    if (email !== profileData.email) body.email = email;
+
+    if (Object.keys(body).length === 0) {
+      errorEl.textContent = 'No changes to save';
+      errorEl.style.display = 'block';
+      return;
+    }
+
+    const response = await fetchJSON('/auth/profile', {
+      method: 'PUT',
+      body: JSON.stringify(body)
+    });
+
+    // Update local state
+    profileData = response;
+    authUser = { ...authUser, full_name: response.full_name, email: response.email };
+    localStorage.setItem('authUser', JSON.stringify(authUser));
+
+    // Update UI
+    updateUserDisplay();
+    loadProfileData();
+
+    successEl.style.display = 'block';
+    showToast('success', 'Profile Updated', 'Your profile has been updated successfully');
+
+  } catch (error) {
+    errorEl.textContent = error.message || 'Failed to update profile';
+    errorEl.style.display = 'block';
+  }
+}
+
+async function changePassword(currentPassword, newPassword, confirmPassword) {
+  const successEl = document.getElementById('passwordSuccess');
+  const errorEl = document.getElementById('passwordError');
+
+  successEl.style.display = 'none';
+  errorEl.style.display = 'none';
+
+  // Validate passwords match
+  if (newPassword !== confirmPassword) {
+    errorEl.textContent = 'New passwords do not match';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  // Validate password length
+  if (newPassword.length < 8) {
+    errorEl.textContent = 'Password must be at least 8 characters';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  try {
+    await fetchJSON('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword
+      })
+    });
+
+    successEl.style.display = 'block';
+    showToast('success', 'Password Changed', 'Please log in again with your new password');
+
+    // Clear form
+    document.getElementById('changePasswordForm').reset();
+
+    // Log out after a short delay
+    setTimeout(() => {
+      logout();
+    }, 2000);
+
+  } catch (error) {
+    errorEl.textContent = error.message || 'Failed to change password';
+    errorEl.style.display = 'block';
+  }
+}
+
+async function logoutAllSessions() {
+  if (!confirm('This will log you out from all other devices. Continue?')) {
+    return;
+  }
+
+  try {
+    const response = await fetchJSON('/auth/logout-all', { method: 'POST' });
+    showToast('success', 'Sessions Cleared', response.message || 'Logged out from all other sessions');
+  } catch (error) {
+    showToast('error', 'Error', error.message || 'Failed to logout from other sessions');
+  }
+}
+
+// Initialize profile form handlers
+document.addEventListener('DOMContentLoaded', () => {
+  const profileForm = document.getElementById('profileForm');
+  if (profileForm) {
+    profileForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fullName = document.getElementById('profileFullName').value.trim();
+      const email = document.getElementById('profileEmail').value.trim();
+      await updateProfile(fullName, email);
+    });
+  }
+
+  const changePasswordForm = document.getElementById('changePasswordForm');
+  if (changePasswordForm) {
+    changePasswordForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const currentPassword = document.getElementById('currentPassword').value;
+      const newPassword = document.getElementById('newPassword').value;
+      const confirmPassword = document.getElementById('confirmPassword').value;
+      await changePassword(currentPassword, newPassword, confirmPassword);
+    });
+  }
+});
+
+// Expose functions globally
+window.navigateToProfile = navigateToProfile;
+window.resetProfileForm = resetProfileForm;
+window.logoutAllSessions = logoutAllSessions;
+
+// =============================================================================
+// END PROFILE MANAGEMENT
+// =============================================================================
+
 // Toast notification system
 function showToast(type, title, message, duration = 4000) {
   const container = document.getElementById('toastContainer');
@@ -820,11 +1236,47 @@ function activatePanel(name, path, updateHistory = true) {
 }
 
 async function fetchJSON(path, opts = {}) {
+  // Check if token needs refresh before making request
+  if (accessToken && isTokenExpired(accessToken)) {
+    const refreshed = await refreshAccessToken();
+    if (!refreshed) {
+      return null;
+    }
+  }
+
   try {
+    const headers = {
+      "Content-Type": "application/json",
+      ...(opts.headers || {}),
+    };
+
+    // Add Authorization header if authenticated
+    if (accessToken) {
+      headers["Authorization"] = `Bearer ${accessToken}`;
+    }
+
     const res = await fetch(`${API_BASE}${path}`, {
-      headers: { "Content-Type": "application/json" },
       ...opts,
+      headers,
     });
+
+    // Handle 401 Unauthorized
+    if (res.status === 401) {
+      // Try to refresh token
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        // Retry the request with new token
+        headers["Authorization"] = `Bearer ${accessToken}`;
+        const retryRes = await fetch(`${API_BASE}${path}`, {
+          ...opts,
+          headers,
+        });
+        if (!retryRes.ok) return null;
+        return await retryRes.json();
+      }
+      return null;
+    }
+
     if (!res.ok) return null;
     return await res.json();
   } catch (err) {
@@ -3485,16 +3937,23 @@ if (!window.history.state || normalizedPath !== currentPath) {
   window.history.replaceState({ path: normalizedPath }, '', normalizedPath);
 }
 
-loadAll().then(() => {
-  // Start SSE streams after initial load
-  createLiveIndicator();
-  startTransactionStream();
-  startAlertStream();
+// initApp - called after successful authentication
+function initApp() {
+  loadAll().then(() => {
+    // Start SSE streams after initial load
+    createLiveIndicator();
+    startTransactionStream();
+    startAlertStream();
 
-  // Ensure stats are computed after all data is loaded
-  if (typeof renderTaskStats === 'function') renderTaskStats();
-  if (typeof renderAlertStats === 'function') renderAlertStats();
-});
+    // Ensure stats are computed after all data is loaded
+    if (typeof renderTaskStats === 'function') renderTaskStats();
+    if (typeof renderAlertStats === 'function') renderAlertStats();
+  });
+}
+
+// Expose functions to window for onclick handlers
+window.logout = logout;
+window.toggleUserDropdown = toggleUserDropdown;
 
 // ========================================
 // Settings functionality

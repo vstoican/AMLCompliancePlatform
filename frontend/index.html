@@ -9,10 +9,37 @@
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
+  <!-- Login Overlay -->
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-container">
+      <div class="login-header">
+        <img src="./logo.jpeg" alt="TrustRelay" class="login-logo" />
+        <h1>TrustRelay</h1>
+        <p class="muted">AML Compliance Platform</p>
+      </div>
+      <form id="loginForm" class="login-form">
+        <div class="form-group">
+          <label for="loginEmail">Email</label>
+          <input type="email" id="loginEmail" name="email" required autocomplete="username" placeholder="your@email.com" />
+        </div>
+        <div class="form-group">
+          <label for="loginPassword">Password</label>
+          <input type="password" id="loginPassword" name="password" required autocomplete="current-password" placeholder="Enter your password" />
+        </div>
+        <div id="loginError" class="login-error" style="display: none;"></div>
+        <button type="submit" class="btn primary" style="width: 100%;">
+          <span id="loginBtnText">Sign In</span>
+          <span id="loginSpinner" class="spinner" style="display: none;"></span>
+        </button>
+      </form>
+      <p class="login-footer muted">Default password: changeme123</p>
+    </div>
+  </div>
+
   <!-- Toast Container -->
   <div id="toastContainer" class="toast-container"></div>
 
-  <div class="app-shell">
+  <div class="app-shell" style="display: none;">
     <aside class="sidebar">
       <div class="brand">
         <img src="./logo.jpeg" alt="TrustRelay" class="brand-logo" />
@@ -86,6 +113,15 @@
     </aside>
 
     <main class="main">
+      <!-- Top Header Bar -->
+      <header class="top-header">
+        <div class="top-header-left">
+          <!-- Breadcrumb or page title could go here -->
+        </div>
+        <div class="top-header-right">
+          <div id="userMenuContainer"></div>
+        </div>
+      </header>
 
       <section id="overview" class="panel active">
         <div class="grid stats">
@@ -1657,6 +1693,117 @@
               </tr>
             </tbody>
           </table>
+        </div>
+      </section>
+
+      <!-- User Profile Section -->
+      <section id="profile" class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>My Profile</h2>
+            <p class="muted">Manage your account settings and security</p>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <!-- Profile Information Card -->
+          <div class="card profile-card">
+            <div class="card-head">
+              <h3>Profile Information</h3>
+            </div>
+            <div class="profile-header">
+              <div id="profileAvatar" class="profile-avatar-large">--</div>
+              <div class="profile-header-info">
+                <h2 id="profileName">Loading...</h2>
+                <span id="profileRole" class="badge purple">-</span>
+              </div>
+            </div>
+            <form id="profileForm" class="form" style="margin-top: 20px;">
+              <label>
+                Full Name
+                <input id="profileFullName" name="full_name" type="text" required minlength="2" />
+              </label>
+              <label>
+                Email Address
+                <input id="profileEmail" name="email" type="email" required />
+              </label>
+              <label>
+                Role
+                <input id="profileRoleInput" type="text" readonly disabled />
+              </label>
+              <div style="display: flex; gap: 12px; margin-top: 8px;">
+                <button type="submit" class="btn primary">Save Changes</button>
+                <button type="button" class="btn outline" onclick="resetProfileForm()">Cancel</button>
+              </div>
+              <p id="profileSuccess" class="profile-success" style="display: none;">Profile updated successfully!</p>
+              <p id="profileError" class="profile-error" style="display: none;"></p>
+            </form>
+          </div>
+
+          <!-- Security Card -->
+          <div class="card">
+            <div class="card-head">
+              <h3>Security</h3>
+            </div>
+
+            <!-- Change Password Section -->
+            <div class="profile-section">
+              <h4>Change Password</h4>
+              <form id="changePasswordForm" class="form">
+                <label>
+                  Current Password
+                  <input id="currentPassword" name="current_password" type="password" required />
+                </label>
+                <label>
+                  New Password
+                  <input id="newPassword" name="new_password" type="password" required minlength="8" />
+                </label>
+                <label>
+                  Confirm New Password
+                  <input id="confirmPassword" name="confirm_password" type="password" required minlength="8" />
+                </label>
+                <button type="submit" class="btn outline">Change Password</button>
+                <p id="passwordSuccess" class="profile-success" style="display: none;">Password changed successfully!</p>
+                <p id="passwordError" class="profile-error" style="display: none;"></p>
+              </form>
+            </div>
+
+            <!-- Sessions Section -->
+            <div class="profile-section" style="margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border);">
+              <h4>Active Sessions</h4>
+              <p class="muted" style="font-size: 14px; margin-bottom: 12px;">
+                Manage your active sessions across devices.
+              </p>
+              <button class="btn outline" style="color: var(--red);" onclick="logoutAllSessions()">
+                Log Out All Other Sessions
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Account Activity Card -->
+        <div class="card" style="margin-top: 18px;">
+          <div class="card-head">
+            <h3>Account Details</h3>
+          </div>
+          <div class="profile-details-grid">
+            <div class="profile-detail">
+              <span class="label">User ID</span>
+              <span id="profileUserId" class="value">-</span>
+            </div>
+            <div class="profile-detail">
+              <span class="label">Account Status</span>
+              <span id="profileStatus" class="badge teal">Active</span>
+            </div>
+            <div class="profile-detail">
+              <span class="label">Last Login</span>
+              <span id="profileLastLogin" class="value">-</span>
+            </div>
+            <div class="profile-detail">
+              <span class="label">Member Since</span>
+              <span id="profileCreatedAt" class="value">-</span>
+            </div>
+          </div>
         </div>
       </section>
 

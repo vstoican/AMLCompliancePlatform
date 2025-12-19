@@ -3,6 +3,7 @@ uvicorn[standard]==0.30.1
 psycopg[binary]==3.1.18
 psycopg_pool==3.2.2
 pydantic==2.9.2
+pydantic[email]
 python-dotenv==1.0.1
 temporalio==1.9.0
 nats-py==2.7.2
@@ -10,3 +11,7 @@ boto3==1.35.0
 python-multipart==0.0.9
 anthropic>=0.39.0
 openai>=1.50.0
+# Authentication
+bcrypt==4.2.1
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
