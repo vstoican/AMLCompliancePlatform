@@ -64,15 +64,23 @@ async def _execute_task_action(
 
     if temporal_client:
         try:
-            from src.workflows.worker import TaskLifecycleWorkflow
+            from src.workflows.worker import TaskLifecycleWorkflow, INTERNAL_TASK_QUEUE, INTERNAL_NAMESPACE
+            from src.api.config import settings
+            from temporalio.client import Client
+
+            # Connect to internal namespace for lifecycle workflows
+            internal_client = await Client.connect(
+                f"{settings.temporal_host}:{settings.temporal_port}",
+                namespace=INTERNAL_NAMESPACE,
+            )
 
             workflow_id = f"task-{task_id}-{action}-{uuid_module.uuid4().hex[:8]}"
 
-            handle = await temporal_client.start_workflow(
+            handle = await internal_client.start_workflow(
                 TaskLifecycleWorkflow.run,
                 args=[task_id, action, user_id, params],
                 id=workflow_id,
-                task_queue="aml-tasks",
+                task_queue=INTERNAL_TASK_QUEUE,
             )
 
             # Wait for result with timeout
@@ -526,9 +534,10 @@ async def start_task_workflow(
     task_id: int,
     conn: AsyncConnection = Depends(connection),
 ) -> Task:
-    """Start a Temporal workflow for this task"""
+    """Start a Temporal workflow for this task (business workflows visible in Temporal UI)"""
     # Import here to avoid circular imports
     from .main import temporal_client
+    from src.workflows.worker import BUSINESS_TASK_QUEUE
 
     if not temporal_client:
         raise HTTPException(
@@ -576,7 +585,7 @@ async def start_task_workflow(
                     dict(task["details"]) if task["details"] else {}
                 ],
                 id=workflow_id,
-                task_queue="aml-tasks",
+                task_queue=BUSINESS_TASK_QUEUE,
             )
 
             # Update task with workflow info

@@ -55,6 +55,8 @@ services:
         condition: service_healthy
       temporal:
         condition: service_started
+      temporal-setup:
+        condition: service_completed_successfully
       nats:
         condition: service_started
     restart: unless-stopped
@@ -202,6 +204,27 @@ services:
     depends_on:
       - temporal
     restart: unless-stopped
+
+  # Create internal namespace for lifecycle workflows (not shown in default UI)
+  temporal-setup:
+    image: temporalio/admin-tools:latest
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CLI_ADDRESS=temporal:7233
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Temporal to be ready..."
+        until tctl cluster health 2>/dev/null | grep -q SERVING; do
+          echo "Temporal not ready, waiting..."
+          sleep 2
+        done
+        echo "Temporal is ready. Creating 'internal' namespace..."
+        tctl --ns internal namespace register --retention 7d --description "Internal system workflows" 2>/dev/null || echo "Namespace may already exist"
+        echo "Namespace setup complete"
+    depends_on:
+      - temporal
+    restart: "no"
 
   nats:
     image: nats:2.10.17

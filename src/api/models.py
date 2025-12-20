@@ -596,3 +596,104 @@ class AlertStatusHistory(BaseModel):
     reason: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+
+
+# =============================================================================
+# WORKFLOW DEFINITION MODELS
+# =============================================================================
+
+WORKFLOW_TYPES = ["kyc_refresh", "sanctions_screening", "investigation", "document_request", "escalation", "sar_filing"]
+SCHEDULE_TYPES = ["cron", "event", "manual"]
+SEVERITIES = ["low", "medium", "high", "critical"]
+
+
+class WorkflowDefinition(BaseModel):
+    """Workflow definition model"""
+    id: int
+    code: str
+    name: str
+    description: Optional[str] = None
+    workflow_type: str
+    schedule_type: str
+    cron_expression: Optional[str] = None
+    trigger_event: Optional[str] = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    create_alert: bool
+    alert_severity: str
+    create_task: bool
+    task_type: Optional[str] = None
+    task_priority: str
+    timeout_seconds: int
+    retry_max_attempts: int
+    retry_backoff_seconds: int
+    enabled: bool
+    is_system_default: bool
+    version: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorkflowDefinitionCreate(BaseModel):
+    """Create workflow definition request"""
+    code: str
+    name: str
+    description: Optional[str] = None
+    workflow_type: str = Field(..., description="One of: kyc_refresh, sanctions_screening, investigation, document_request, escalation, sar_filing")
+    schedule_type: str = Field("manual", description="One of: cron, event, manual")
+    cron_expression: Optional[str] = Field(None, description="Cron expression for scheduled workflows, e.g., '0 2 * * *'")
+    trigger_event: Optional[str] = Field(None, description="Event that triggers the workflow, e.g., 'customer.created'")
+    parameters: dict[str, Any] = Field(default_factory=dict, description="Workflow-specific configuration parameters")
+    create_alert: bool = False
+    alert_severity: str = "medium"
+    create_task: bool = False
+    task_type: Optional[str] = None
+    task_priority: str = "medium"
+    timeout_seconds: int = 3600
+    retry_max_attempts: int = 3
+    retry_backoff_seconds: int = 60
+    enabled: bool = True
+
+
+class WorkflowDefinitionUpdate(BaseModel):
+    """Update workflow definition request"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    schedule_type: Optional[str] = None
+    cron_expression: Optional[str] = None
+    trigger_event: Optional[str] = None
+    parameters: Optional[dict[str, Any]] = None
+    create_alert: Optional[bool] = None
+    alert_severity: Optional[str] = None
+    create_task: Optional[bool] = None
+    task_type: Optional[str] = None
+    task_priority: Optional[str] = None
+    timeout_seconds: Optional[int] = None
+    retry_max_attempts: Optional[int] = None
+    retry_backoff_seconds: Optional[int] = None
+    enabled: Optional[bool] = None
+
+
+class WorkflowExecution(BaseModel):
+    """Workflow execution history model"""
+    id: int
+    workflow_definition_id: Optional[int] = None
+    workflow_definition_code: Optional[str] = None
+    temporal_workflow_id: Optional[str] = None
+    temporal_run_id: Optional[str] = None
+    status: str
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    result: Optional[dict[str, Any]] = None
+    error: Optional[str] = None
+    triggered_by: Optional[str] = None
+    triggered_by_user_id: Optional[UUID] = None
+    parameters_used: Optional[dict[str, Any]] = None
+    # Joined fields
+    workflow_name: Optional[str] = None
+    triggered_by_user_name: Optional[str] = None
+
+
+class WorkflowRunRequest(BaseModel):
+    """Request to manually run a workflow"""
+    parameters: Optional[dict[str, Any]] = None
+    triggered_by_user_id: Optional[UUID] = None

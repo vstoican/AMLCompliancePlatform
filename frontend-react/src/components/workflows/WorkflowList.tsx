@@ -30,9 +30,12 @@ const statusConfig: Record<string, { icon: typeof Play; color: string; label: st
 }
 
 const typeLabels: Record<string, string> = {
-  KYCRefreshWorkflow: 'KYC Refresh',
+  KycRefreshWorkflow: 'KYC Refresh',
   SanctionsScreeningWorkflow: 'Sanctions Screening',
-  AlertHandlingWorkflow: 'Alert Handling',
+  InvestigationWorkflow: 'Investigation',
+  DocumentRequestWorkflow: 'Document Request',
+  EscalationWorkflow: 'Escalation',
+  SarFilingWorkflow: 'SAR Filing',
 }
 
 export function WorkflowList({

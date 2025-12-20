@@ -30,7 +30,7 @@ from src.api.models import (
     AlertResume,
 )
 from src.api.s3 import delete_file, download_file, upload_file
-from src.workflows.worker import AlertLifecycleWorkflow
+from src.workflows.worker import AlertLifecycleWorkflow, INTERNAL_TASK_QUEUE, INTERNAL_NAMESPACE
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +68,13 @@ async def create_alert(
 # =============================================================================
 
 async def get_temporal_client() -> Client:
-    """Get or create Temporal client singleton"""
+    """Get or create Temporal client singleton for internal namespace"""
     global _temporal_client
     if _temporal_client is None:
-        _temporal_client = await Client.connect(f"{settings.temporal_host}:{settings.temporal_port}")
+        _temporal_client = await Client.connect(
+            f"{settings.temporal_host}:{settings.temporal_port}",
+            namespace=INTERNAL_NAMESPACE,
+        )
     return _temporal_client
 
 
@@ -91,7 +94,7 @@ async def _execute_alert_action(
         AlertLifecycleWorkflow.run,
         args=[alert_id, action, user_id, user_role, params],
         id=workflow_id,
-        task_queue="aml-tasks",
+        task_queue=INTERNAL_TASK_QUEUE,
     )
 
     if not result.get("success", False):

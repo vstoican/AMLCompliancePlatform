@@ -41,6 +41,7 @@ from .tasks import router as tasks_router, definition_router as task_definitions
 from .users import router as users_router
 from .alerts import router as alerts_router
 from .ai_assistant import router as ai_router
+from .workflow_definitions import router as workflow_definitions_router
 
 app = FastAPI(title="AML Compliance MVP", version="0.1.0", redoc_url=None)
 
@@ -70,6 +71,9 @@ app.include_router(alerts_router)
 
 # Register AI assistant router
 app.include_router(ai_router)
+
+# Register workflow definitions router
+app.include_router(workflow_definitions_router)
 
 # Global Temporal client
 temporal_client: Optional[TemporalClient] = None
@@ -136,7 +140,8 @@ async def startup_event() -> None:
     global temporal_client, _alert_notify_task
 
     # Initialize database pool
-    get_pool()
+    from src.api.db import init_pool
+    await init_pool()
 
     # Initialize JetStream connection
     await connect_jetstream()
@@ -173,13 +178,12 @@ async def shutdown_event() -> None:
     # Close JetStream connection
     await close_jetstream()
 
-    # Close Temporal client
-    if temporal_client:
-        await temporal_client.close()
+    # Close Temporal client (Temporal SDK client doesn't have a close method)
+    # temporal_client connections are managed internally
 
     # Close database pool
-    if get_pool():
-        await get_pool().close()
+    from src.api.db import close_pool
+    await close_pool()
 
 
 @app.get("/health")
@@ -974,13 +978,13 @@ async def start_kyc_workflow(customer_id: UUID, days_before: int = 365) -> dict:
         raise HTTPException(status_code=503, detail="Temporal client not connected")
 
     try:
-        from src.workflows.worker import KycRefreshWorkflow
+        from src.workflows.worker import KycRefreshWorkflow, BUSINESS_TASK_QUEUE
 
         handle = await temporal_client.start_workflow(
             KycRefreshWorkflow.run,
             args=[str(customer_id), days_before],
             id=f"kyc-refresh-{customer_id}-{datetime.utcnow().timestamp()}",
-            task_queue="aml-tasks",
+            task_queue=BUSINESS_TASK_QUEUE,
         )
 
         return {
@@ -1001,13 +1005,13 @@ async def start_sanctions_workflow(customer_id: UUID, hit_detected: bool = False
         raise HTTPException(status_code=503, detail="Temporal client not connected")
 
     try:
-        from src.workflows.worker import SanctionsScreeningWorkflow
+        from src.workflows.worker import SanctionsScreeningWorkflow, BUSINESS_TASK_QUEUE
 
         handle = await temporal_client.start_workflow(
             SanctionsScreeningWorkflow.run,
             args=[str(customer_id), hit_detected],
             id=f"sanctions-screening-{customer_id}-{datetime.utcnow().timestamp()}",
-            task_queue="aml-tasks",
+            task_queue=BUSINESS_TASK_QUEUE,
         )
 
         return {
@@ -1033,7 +1037,7 @@ async def start_alert_workflow(
         raise HTTPException(status_code=503, detail="Temporal client not connected")
 
     try:
-        from src.workflows.worker import AlertHandlingWorkflow, InvestigationWorkflow
+        from src.workflows.worker import AlertHandlingWorkflow, InvestigationWorkflow, BUSINESS_TASK_QUEUE
 
         async with conn.cursor(row_factory=dict_row) as cur:
             await cur.execute("SELECT * FROM alerts WHERE id = %s", (alert_id,))
@@ -1114,7 +1118,7 @@ async def start_alert_workflow(
                     dict(task["details"]) if task["details"] else {}
                 ],
                 id=workflow_id,
-                task_queue="aml-tasks",
+                task_queue=BUSINESS_TASK_QUEUE,
             )
 
             # Update task with workflow info

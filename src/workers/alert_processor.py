@@ -54,8 +54,8 @@ async def start_alert_workflow(alert_data: dict) -> dict:
         return {"success": False, "error": "Missing alert_id"}
 
     try:
-        # Import workflow class
-        from src.workflows.worker import AlertLifecycleWorkflow
+        # Import workflow class and constants
+        from src.workflows.worker import AlertLifecycleWorkflow, INTERNAL_TASK_QUEUE, INTERNAL_NAMESPACE
 
         # Build params from alert data
         params = {
@@ -79,7 +79,7 @@ async def start_alert_workflow(alert_data: dict) -> dict:
                 params,
             ],
             id=workflow_id,
-            task_queue="aml-tasks",
+            task_queue=INTERNAL_TASK_QUEUE,
         )
 
         logger.info(
@@ -168,11 +168,15 @@ async def run_processor():
     logger.info(f"Subject: {SUBJECT}")
     logger.info("")
 
-    # Connect to Temporal
-    logger.info("Connecting to Temporal...")
+    # Connect to Temporal (internal namespace for lifecycle workflows)
+    logger.info("Connecting to Temporal (internal namespace)...")
     try:
-        temporal_client = await TemporalClient.connect(f"{TEMPORAL_HOST}:{TEMPORAL_PORT}")
-        logger.info("Temporal connected")
+        from src.workflows.worker import INTERNAL_NAMESPACE
+        temporal_client = await TemporalClient.connect(
+            f"{TEMPORAL_HOST}:{TEMPORAL_PORT}",
+            namespace=INTERNAL_NAMESPACE,
+        )
+        logger.info(f"Temporal connected to namespace '{INTERNAL_NAMESPACE}'")
     except Exception as e:
         logger.error(f"Failed to connect to Temporal: {e}")
         return

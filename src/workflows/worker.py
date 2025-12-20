@@ -56,32 +56,72 @@ async def create_alert_activity(customer_id: str, scenario: str, severity: str, 
 
 
 @activity.defn
-async def schedule_kyc_task_activity(customer_id: str, days_before: int = 365) -> None:
-    """Schedule KYC task based on document expiry"""
+async def schedule_kyc_task_activity(customer_id: str, days_before: int = 365) -> dict[str, Any]:
+    """
+    Schedule KYC task based on document expiry.
+
+    If customer_id is empty, runs in batch mode - finds all customers
+    with documents expiring within days_before and creates KYC tasks.
+    """
     pool = get_pool()
+    tasks_created = 0
+    customers_checked = 0
+
     async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute(
-            "SELECT document_date_of_expire FROM customers WHERE id = %s",
-            (customer_id,)
-        )
-        row = await cur.fetchone()
-        if not row or not row["document_date_of_expire"]:
-            return
-        due = row["document_date_of_expire"]
-        if isinstance(due, date):
-            due_date = due
+        if customer_id:
+            # Single customer mode
+            await cur.execute(
+                "SELECT id, document_date_of_expire FROM customers WHERE id = %s",
+                (customer_id,)
+            )
+            rows = await cur.fetchall()
         else:
-            due_date = due.date()
-        if due_date > date.today() + timedelta(days=days_before):
-            return
-        await cur.execute(
-            """
-            INSERT INTO kyc_tasks (customer_id, due_date, reason)
-            VALUES (%s, %s, %s)
-            ON CONFLICT DO NOTHING
-            """,
-            (customer_id, due_date, "Workflow scheduled KYC update"),
-        )
+            # Batch mode - find all customers with expiring documents
+            expiry_threshold = date.today() + timedelta(days=days_before)
+            await cur.execute(
+                """
+                SELECT id, document_date_of_expire
+                FROM customers
+                WHERE document_date_of_expire IS NOT NULL
+                  AND document_date_of_expire <= %s
+                  AND status = 'active'
+                  AND id NOT IN (
+                      SELECT customer_id FROM kyc_tasks
+                      WHERE status IN ('pending', 'in_progress')
+                  )
+                LIMIT 100
+                """,
+                (expiry_threshold,)
+            )
+            rows = await cur.fetchall()
+
+        for row in rows:
+            customers_checked += 1
+            if not row.get("document_date_of_expire"):
+                continue
+
+            due = row["document_date_of_expire"]
+            if isinstance(due, date):
+                due_date = due
+            else:
+                due_date = due.date()
+
+            # For batch mode, we already filtered by date; for single mode, check here
+            if customer_id and due_date > date.today() + timedelta(days=days_before):
+                continue
+
+            await cur.execute(
+                """
+                INSERT INTO kyc_tasks (customer_id, due_date, reason)
+                VALUES (%s, %s, %s)
+                ON CONFLICT DO NOTHING
+                """,
+                (row["id"], due_date, "Workflow scheduled KYC update"),
+            )
+            tasks_created += 1
+
+    logger.info(f"KYC refresh: checked {customers_checked} customers, created {tasks_created} tasks")
+    return {"customers_checked": customers_checked, "tasks_created": tasks_created}
 
 
 # =============================================================================
@@ -1423,40 +1463,6 @@ class SarFilingWorkflow:
         }
 
 
-@workflow.defn
-class AlertHandlingWorkflow:
-    """Workflow to triage and close alerts (legacy)"""
-
-    @workflow.run
-    async def run(
-        self,
-        alert_id: int,
-        action: str = "triage",
-        resolved_by: Optional[str] = None
-    ) -> dict[str, Any]:
-        result = {"alert_id": alert_id, "action": action}
-
-        # Mark as in progress
-        await workflow.execute_activity(
-            update_alert_status_activity,
-            args=[alert_id, "in_progress", f"Started: {action}", resolved_by],
-            start_to_close_timeout=timedelta(seconds=20),
-        )
-
-        # Simulate triage window
-        await workflow.sleep(2)
-
-        # Close the alert
-        await workflow.execute_activity(
-            update_alert_status_activity,
-            args=[alert_id, "resolved", f"Completed via action '{action}'", resolved_by],
-            start_to_close_timeout=timedelta(seconds=20),
-        )
-
-        result["status"] = "resolved"
-        return result
-
-
 # =============================================================================
 # ALERT LIFECYCLE WORKFLOW
 # =============================================================================
@@ -1619,12 +1625,63 @@ class AlertLifecycleWorkflow:
 # WORKER SETUP
 # =============================================================================
 
+# Namespace and queue constants
+BUSINESS_NAMESPACE = "default"  # Default namespace - visible in Temporal UI
+INTERNAL_NAMESPACE = "internal"  # Separate namespace - not shown in default UI view
+
+BUSINESS_TASK_QUEUE = "aml-tasks"  # Business workflows
+INTERNAL_TASK_QUEUE = "aml-internal"  # Internal lifecycle workflows
+
+
+async def _ensure_namespace_exists(address: str, namespace: str, max_retries: int = 30) -> bool:
+    """
+    Wait for a Temporal namespace to be available.
+    The namespace should be pre-created via docker-compose or tctl.
+    Returns True if namespace is ready, False otherwise.
+    """
+    for attempt in range(max_retries):
+        try:
+            # Try to connect to the namespace
+            client = await Client.connect(address, namespace=namespace)
+            logger.info(f"Namespace '{namespace}' is ready")
+            return True
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.info(f"Waiting for namespace '{namespace}'... (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(2)
+            else:
+                logger.warning(f"Namespace '{namespace}' not available after {max_retries} attempts: {e}")
+                return False
+    return False
+
+
 async def run_worker() -> None:
-    """Run the Temporal worker"""
-    client = await Client.connect(f"{settings.temporal_host}:{settings.temporal_port}")
-    worker = Worker(
-        client,
-        task_queue="aml-tasks",
+    """Run both business and internal Temporal workers"""
+    # Initialize database pool
+    from src.api.db import init_pool
+    await init_pool()
+
+    temporal_address = f"{settings.temporal_host}:{settings.temporal_port}"
+
+    # Connect to business namespace (default - always exists)
+    business_client = await Client.connect(temporal_address, namespace=BUSINESS_NAMESPACE)
+    logger.info(f"Connected to business namespace '{BUSINESS_NAMESPACE}'")
+
+    # Wait for internal namespace (created by temporal-admin-tools in docker-compose)
+    internal_ready = await _ensure_namespace_exists(temporal_address, INTERNAL_NAMESPACE)
+    if not internal_ready:
+        logger.error(f"Internal namespace '{INTERNAL_NAMESPACE}' not available. "
+                     f"Create it with: tctl --ns {INTERNAL_NAMESPACE} namespace register")
+        raise RuntimeError(f"Namespace '{INTERNAL_NAMESPACE}' not available")
+
+    internal_client = await Client.connect(temporal_address, namespace=INTERNAL_NAMESPACE)
+    logger.info(f"Connected to internal namespace '{INTERNAL_NAMESPACE}'")
+
+    # Business workflows worker - visible in Temporal UI (default namespace)
+    # These are the workflows users want to see: KYC, Sanctions, Investigations, etc.
+    business_worker = Worker(
+        business_client,
+        task_queue=BUSINESS_TASK_QUEUE,
         workflows=[
             KycRefreshWorkflow,
             SanctionsScreeningWorkflow,
@@ -1632,21 +1689,30 @@ async def run_worker() -> None:
             DocumentRequestWorkflow,
             EscalationWorkflow,
             SarFilingWorkflow,
-            AlertHandlingWorkflow,
-            AlertLifecycleWorkflow,
-            TaskLifecycleWorkflow,
         ],
         activities=[
-            # Existing activities
+            # Business activities
             create_alert_activity,
             schedule_kyc_task_activity,
-            # Task management activities
             update_task_status_activity,
             fetch_customer_data_activity,
             create_escalation_alert_activity,
             request_document_activity,
             perform_sar_checks_activity,
             update_alert_status_activity,
+        ],
+    )
+
+    # Internal lifecycle worker - NOT visible in default Temporal UI
+    # Uses separate 'internal' namespace for complete isolation
+    internal_worker = Worker(
+        internal_client,
+        task_queue=INTERNAL_TASK_QUEUE,
+        workflows=[
+            AlertLifecycleWorkflow,
+            TaskLifecycleWorkflow,
+        ],
+        activities=[
             # Alert lifecycle activities
             init_alert_activity,
             assign_alert_activity,
@@ -1667,8 +1733,16 @@ async def run_worker() -> None:
             create_task_from_alert_activity,
         ],
     )
-    logger.info("Starting Temporal worker on queue 'aml-tasks'")
-    await worker.run()
+
+    logger.info(f"Starting Temporal workers:")
+    logger.info(f"  - Business workflows: namespace='{BUSINESS_NAMESPACE}', queue='{BUSINESS_TASK_QUEUE}'")
+    logger.info(f"  - Internal workflows: namespace='{INTERNAL_NAMESPACE}', queue='{INTERNAL_TASK_QUEUE}'")
+
+    # Run both workers concurrently
+    await asyncio.gather(
+        business_worker.run(),
+        internal_worker.run(),
+    )
 
 
 if __name__ == "__main__":
