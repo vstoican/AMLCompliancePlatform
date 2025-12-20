@@ -1,20 +1,24 @@
 "use client"
 
 import { useState } from 'react'
-import { ClipboardList, Plus, RefreshCw } from 'lucide-react'
+import { ClipboardList, Plus, RefreshCw, LayoutGrid, List } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { TaskFilters, TaskList, TaskDetailSheet } from '@/components/tasks'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { TaskFilters, TaskList, TaskDetailSheet, TaskKanbanBoard } from '@/components/tasks'
 import { PageHeader } from '@/components/shared'
 import { useTasks, useClaimTask, useReleaseTask, useCompleteTask } from '@/hooks/queries'
 import { useAuthStore } from '@/stores/authStore'
 import type { Task, TaskFilters as Filters } from '@/types/task'
+
+type ViewMode = 'list' | 'board'
 
 export default function TasksPage() {
   const user = useAuthStore((state) => state.user)
   const [filters, setFilters] = useState<Filters>({})
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
+  const [viewMode, setViewMode] = useState<ViewMode>('board')
 
   const { data, isLoading, refetch } = useTasks(filters)
   const claimTask = useClaimTask()
