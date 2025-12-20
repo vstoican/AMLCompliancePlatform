@@ -4,10 +4,16 @@ import { useState } from 'react'
 import { Plus, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import {
   CustomerTable,
-  CustomerFilters,
   CustomerForm,
   CustomerDetailPanel,
 } from '@/components/customers'
@@ -80,6 +86,14 @@ export default function CustomersPage() {
     }
   }
 
+  const handleRiskLevelChange = (value: string) => {
+    setFilters({ ...filters, risk_level: value === 'all' ? undefined : value })
+  }
+
+  const handleStatusChange = (value: string) => {
+    setFilters({ ...filters, status: value === 'all' ? undefined : value })
+  }
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -96,17 +110,6 @@ export default function CustomersPage() {
         </Button>
       </div>
 
-      {/* Filters */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Filters</CardTitle>
-          <CardDescription>Search and filter customers</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <CustomerFilters filters={filters} onFiltersChange={setFilters} />
-        </CardContent>
-      </Card>
-
       {/* Table */}
       <Card>
         <CardHeader>
@@ -114,12 +117,37 @@ export default function CustomersPage() {
             <div className="flex items-center gap-2">
               <Users className="h-5 w-5 text-muted-foreground" />
               <CardTitle className="text-base">Customer List</CardTitle>
+              {data && (
+                <span className="text-sm text-muted-foreground">
+                  ({data.length})
+                </span>
+              )}
             </div>
-            {data && (
-              <span className="text-sm text-muted-foreground">
-                {data.length} total customers
-              </span>
-            )}
+            <div className="flex items-center gap-2">
+              <Select value={filters.risk_level || 'all'} onValueChange={handleRiskLevelChange}>
+                <SelectTrigger className="w-[130px] h-8 text-xs">
+                  <SelectValue placeholder="Risk Level" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Risk</SelectItem>
+                  <SelectItem value="low">Low</SelectItem>
+                  <SelectItem value="medium">Medium</SelectItem>
+                  <SelectItem value="high">High</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={filters.status || 'all'} onValueChange={handleStatusChange}>
+                <SelectTrigger className="w-[130px] h-8 text-xs">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="ACTIVE">Active</SelectItem>
+                  <SelectItem value="PENDING">Pending</SelectItem>
+                  <SelectItem value="INACTIVE">Inactive</SelectItem>
+                  <SelectItem value="BLOCKED">Blocked</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </CardHeader>
         <CardContent>

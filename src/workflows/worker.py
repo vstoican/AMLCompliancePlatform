@@ -129,6 +129,79 @@ async def schedule_kyc_task_activity(customer_id: str, days_before: int = 365) -
 # =============================================================================
 
 @activity.defn
+async def create_workflow_task_activity(
+    workflow_definition_id: int,
+    customer_id: Optional[str] = None,
+    alert_id: Optional[int] = None,
+    workflow_id: Optional[str] = None,
+    workflow_run_id: Optional[str] = None,
+    additional_details: Optional[dict] = None,
+) -> dict[str, Any]:
+    """
+    Create a task based on workflow definition settings.
+    Checks the workflow definition's create_task flag and creates task accordingly.
+    """
+    pool = get_pool()
+    async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        # Get workflow definition
+        await cur.execute(
+            """
+            SELECT id, code, name, workflow_type, create_task, task_type, task_priority
+            FROM workflow_definitions WHERE id = %s
+            """,
+            (workflow_definition_id,),
+        )
+        definition = await cur.fetchone()
+
+        if not definition:
+            logger.warning(f"Workflow definition {workflow_definition_id} not found")
+            return {"created": False, "reason": "definition_not_found"}
+
+        if not definition["create_task"]:
+            logger.info(f"Workflow {definition['code']} has create_task=False, skipping task creation")
+            return {"created": False, "reason": "create_task_disabled"}
+
+        # Determine task type and title
+        task_type = definition["task_type"] or definition["workflow_type"]
+        priority = definition["task_priority"] or "medium"
+        title = f"{definition['name']}: Requires Review"
+        description = f"Task created by workflow {definition['code']}"
+
+        if additional_details:
+            if additional_details.get("title"):
+                title = additional_details["title"]
+            if additional_details.get("description"):
+                description = additional_details["description"]
+
+        # Create the task
+        await cur.execute(
+            """
+            INSERT INTO tasks (
+                customer_id, alert_id, task_type, priority, status,
+                workflow_id, workflow_run_id, workflow_status,
+                title, description, details
+            ) VALUES (
+                %s, %s, %s, %s, 'pending',
+                %s, %s, 'RUNNING',
+                %s, %s, %s
+            )
+            RETURNING id
+            """,
+            (
+                customer_id, alert_id, task_type, priority,
+                workflow_id, workflow_run_id,
+                title, description, Jsonb(additional_details or {}),
+            ),
+        )
+        result = await cur.fetchone()
+        await conn.commit()
+
+        task_id = result["id"]
+        logger.info(f"Created task {task_id} for workflow {definition['code']}")
+        return {"created": True, "task_id": task_id}
+
+
+@activity.defn
 async def update_task_status_activity(
     task_id: int,
     status: str,
@@ -1122,7 +1195,7 @@ async def create_task_from_alert_activity(
                         title, description, assigned_to, assigned_at,
                         status, details, created_by
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), 'in_progress', %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), 'pending', %s, %s)
                     RETURNING id
                 """, (
                     alert.get("customer_id"),
@@ -1256,71 +1329,6 @@ class TaskLifecycleWorkflow:
 
 
 @workflow.defn
-class InvestigationWorkflow:
-    """Workflow for investigation tasks"""
-
-    @workflow.run
-    async def run(
-        self,
-        customer_id: Optional[str],
-        task_id: int,
-        details: dict[str, Any]
-    ) -> dict[str, Any]:
-        result = {"task_id": task_id, "customer_id": customer_id}
-
-        # Step 1: Fetch customer data if customer_id provided
-        if customer_id:
-            customer_data = await workflow.execute_activity(
-                fetch_customer_data_activity,
-                args=[customer_id],
-                start_to_close_timeout=timedelta(seconds=30),
-            )
-            result["customer_data"] = customer_data
-
-            # Step 2: Analyze risk indicators
-            risk_indicators = {
-                "high_volume": customer_data.get("total_volume", 0) > 100000,
-                "many_alerts": customer_data.get("alert_count", 0) > 5,
-                "open_alerts": customer_data.get("open_alerts", 0) > 0,
-                "pep_flag": customer_data.get("pep_flag", False),
-                "sanctions_hit": customer_data.get("sanctions_hit", False),
-                "high_risk": customer_data.get("risk_level") == "high",
-            }
-            result["risk_indicators"] = risk_indicators
-
-            # Step 3: Auto-escalate if high risk
-            needs_escalation = (
-                risk_indicators["pep_flag"] or
-                risk_indicators["sanctions_hit"] or
-                (risk_indicators["high_risk"] and risk_indicators["many_alerts"])
-            )
-
-            if needs_escalation:
-                await workflow.execute_activity(
-                    create_escalation_alert_activity,
-                    args=[customer_id, task_id, "High-risk indicators detected during investigation"],
-                    start_to_close_timeout=timedelta(seconds=20),
-                )
-                result["escalated"] = True
-            else:
-                result["escalated"] = False
-
-        # Step 4: Update task status
-        await workflow.execute_activity(
-            update_task_status_activity,
-            args=[
-                task_id,
-                "completed",
-                f"Investigation completed. Escalation: {result.get('escalated', False)}",
-                "COMPLETED"
-            ],
-            start_to_close_timeout=timedelta(seconds=20),
-        )
-
-        return result
-
-
-@workflow.defn
 class DocumentRequestWorkflow:
     """Workflow for document request tasks"""
 
@@ -1332,13 +1340,33 @@ class DocumentRequestWorkflow:
         details: dict[str, Any]
     ) -> dict[str, Any]:
         document_type = details.get("document_type", "identity_document")
+        workflow_definition_id = details.get("workflow_definition_id")
+        workflow_id = details.get("workflow_id")
+
+        # Create task if triggered from workflow definition and no task exists
+        if task_id == 0 and workflow_definition_id:
+            task_result = await workflow.execute_activity(
+                create_workflow_task_activity,
+                args=[
+                    workflow_definition_id,
+                    customer_id,
+                    None,  # alert_id
+                    workflow_id,
+                    workflow.info().run_id,
+                    {"document_type": document_type, "triggered_from": "workflow_definition"},
+                ],
+                start_to_close_timeout=timedelta(seconds=30),
+            )
+            if task_result.get("created"):
+                task_id = task_result["task_id"]
 
         if not customer_id:
-            await workflow.execute_activity(
-                update_task_status_activity,
-                args=[task_id, "cancelled", "No customer specified", "FAILED"],
-                start_to_close_timeout=timedelta(seconds=20),
-            )
+            if task_id:
+                await workflow.execute_activity(
+                    update_task_status_activity,
+                    args=[task_id, "cancelled", "No customer specified", "FAILED"],
+                    start_to_close_timeout=timedelta(seconds=20),
+                )
             return {"error": "No customer specified", "task_id": task_id}
 
         # Request document
@@ -1348,66 +1376,20 @@ class DocumentRequestWorkflow:
             start_to_close_timeout=timedelta(seconds=30),
         )
 
-        # Update task to in_progress (waiting for document)
-        await workflow.execute_activity(
-            update_task_status_activity,
-            args=[
-                task_id,
-                "in_progress",
-                f"Document requested: {document_type}. Awaiting submission.",
-                "WAITING"
-            ],
-            start_to_close_timeout=timedelta(seconds=20),
-        )
-
-        return result
-
-
-@workflow.defn
-class EscalationWorkflow:
-    """Workflow for escalation tasks"""
-
-    @workflow.run
-    async def run(
-        self,
-        customer_id: Optional[str],
-        task_id: int,
-        details: dict[str, Any]
-    ) -> dict[str, Any]:
-        reason = details.get("escalation_reason", "Automated escalation from task")
-        result = {"task_id": task_id, "customer_id": customer_id}
-
-        if customer_id:
-            # Create escalation alert
-            alert_id = await workflow.execute_activity(
-                create_escalation_alert_activity,
-                args=[customer_id, task_id, reason, "critical"],
+        # Update task notes (keep as pending until user action)
+        if task_id:
+            await workflow.execute_activity(
+                update_task_status_activity,
+                args=[
+                    task_id,
+                    "pending",
+                    f"Document requested: {document_type}. Awaiting submission.",
+                    "WAITING"
+                ],
                 start_to_close_timeout=timedelta(seconds=20),
             )
-            result["alert_id"] = alert_id
 
-            # Fetch customer data for context
-            customer_data = await workflow.execute_activity(
-                fetch_customer_data_activity,
-                args=[customer_id],
-                start_to_close_timeout=timedelta(seconds=30),
-            )
-            result["customer_risk_level"] = customer_data.get("risk_level", "unknown")
-
-        # Update task - escalation tasks stay in_progress until manually resolved
-        await workflow.execute_activity(
-            update_task_status_activity,
-            args=[
-                task_id,
-                "in_progress",
-                "Escalation alert created - pending senior review",
-                "ESCALATED"
-            ],
-            start_to_close_timeout=timedelta(seconds=20),
-        )
-
-        result["status"] = "escalated"
-        return result
+        return {**result, "task_id": task_id}
 
 
 @workflow.defn
@@ -1421,12 +1403,33 @@ class SarFilingWorkflow:
         task_id: int,
         details: dict[str, Any]
     ) -> dict[str, Any]:
-        if not customer_id:
-            await workflow.execute_activity(
-                update_task_status_activity,
-                args=[task_id, "cancelled", "No customer specified for SAR", "FAILED"],
-                start_to_close_timeout=timedelta(seconds=20),
+        workflow_definition_id = details.get("workflow_definition_id")
+        workflow_id = details.get("workflow_id")
+
+        # Create task if triggered from workflow definition and no task exists
+        if task_id == 0 and workflow_definition_id:
+            task_result = await workflow.execute_activity(
+                create_workflow_task_activity,
+                args=[
+                    workflow_definition_id,
+                    customer_id,
+                    None,  # alert_id
+                    workflow_id,
+                    workflow.info().run_id,
+                    {"triggered_from": "workflow_definition"},
+                ],
+                start_to_close_timeout=timedelta(seconds=30),
             )
+            if task_result.get("created"):
+                task_id = task_result["task_id"]
+
+        if not customer_id:
+            if task_id:
+                await workflow.execute_activity(
+                    update_task_status_activity,
+                    args=[task_id, "cancelled", "No customer specified for SAR", "FAILED"],
+                    start_to_close_timeout=timedelta(seconds=20),
+                )
             return {"error": "No customer specified", "task_id": task_id}
 
         # Gather SAR data
@@ -1444,16 +1447,17 @@ class SarFilingWorkflow:
         )
 
         # Update task status
-        await workflow.execute_activity(
-            update_task_status_activity,
-            args=[
-                task_id,
-                "in_progress",
-                f"SAR data gathered. Alerts: {sar_data['alerts_count']}, Transactions: {sar_data['transactions_count']}. Pending filing.",
-                "SAR_PENDING"
-            ],
-            start_to_close_timeout=timedelta(seconds=20),
-        )
+        if task_id:
+            await workflow.execute_activity(
+                update_task_status_activity,
+                args=[
+                    task_id,
+                    "pending",
+                    f"SAR data gathered. Alerts: {sar_data['alerts_count']}, Transactions: {sar_data['transactions_count']}. Pending filing.",
+                    "SAR_PENDING"
+                ],
+                start_to_close_timeout=timedelta(seconds=20),
+            )
 
         return {
             "task_id": task_id,
@@ -1685,15 +1689,14 @@ async def run_worker() -> None:
         workflows=[
             KycRefreshWorkflow,
             SanctionsScreeningWorkflow,
-            InvestigationWorkflow,
             DocumentRequestWorkflow,
-            EscalationWorkflow,
             SarFilingWorkflow,
         ],
         activities=[
             # Business activities
             create_alert_activity,
             schedule_kyc_task_activity,
+            create_workflow_task_activity,
             update_task_status_activity,
             fetch_customer_data_activity,
             create_escalation_alert_activity,

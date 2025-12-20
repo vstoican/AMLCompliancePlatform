@@ -44,7 +44,7 @@ const workflowDefinitionSchema = z.object({
     .regex(/^[a-z0-9_]+$/, 'Code must be lowercase letters, numbers, and underscores only'),
   name: z.string().min(2, 'Name must be at least 2 characters').max(100),
   description: z.string().max(500),
-  workflow_type: z.enum(['kyc_refresh', 'sanctions_screening', 'investigation', 'document_request', 'escalation', 'sar_filing']),
+  workflow_type: z.enum(['kyc_refresh', 'sanctions_screening', 'document_request', 'sar_filing']),
   schedule_type: z.enum(['cron', 'event', 'manual']),
   cron_expression: z.string(),
   trigger_event: z.string(),
@@ -73,9 +73,7 @@ interface WorkflowDefinitionFormProps {
 const workflowTypeOptions = [
   { value: 'kyc_refresh', label: 'KYC Refresh' },
   { value: 'sanctions_screening', label: 'Sanctions Screening' },
-  { value: 'investigation', label: 'Investigation' },
   { value: 'document_request', label: 'Document Request' },
-  { value: 'escalation', label: 'Escalation' },
   { value: 'sar_filing', label: 'SAR Filing' },
 ]
 

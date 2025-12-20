@@ -262,11 +262,13 @@ You have access to a PostgreSQL database via MCP (Model Context Protocol) with t
    - id (UUID), member_id, first_name, last_name, full_name, email, phone_number
    - birth_date, identity_number, place_of_birth, country_of_birth
    - address fields (county, city, street, house_number)
-   - employer_name, status (PENDING, ACTIVE, SUSPENDED, CLOSED)
-   - risk_score (0-100), risk_level (low, medium, high, critical)
-   - pep_flag, sanctions_hit (booleans)
+   - employer_name, status (PENDING, ACTIVE, INACTIVE, BLOCKED)
+   - risk_score (1-10 scale, where 10 is highest risk)
+   - risk_level: ONLY 3 values exist: 'low', 'medium', 'high' (NO 'critical' level exists!)
+   - pep_flag, sanctions_hit (booleans) - important risk indicators
    - geography_risk, product_risk, behavior_risk (1-10 scale)
    - created_at
+   IMPORTANT: For "highest risk" customers, use: risk_level = 'high' OR ORDER BY risk_score DESC
 
 2. transactions - Financial transactions
    - id, surrogate_id, customer_id (UUID FK)
@@ -512,6 +514,10 @@ async def _call_ai(conversation: list, settings: dict) -> str:
 async def _execute_mcp_query(sql: str) -> list:
     """Execute a query via MCP server"""
     import re
+
+    # Fix common AI mistakes: 'critical' risk_level doesn't exist, use 'high'
+    sql = re.sub(r"risk_level\s*=\s*'critical'", "risk_level = 'high'", sql, flags=re.IGNORECASE)
+    sql = re.sub(r"risk_level\s*=\s*\"critical\"", "risk_level = 'high'", sql, flags=re.IGNORECASE)
 
     # Safety check
     sql_upper = sql.upper().strip()

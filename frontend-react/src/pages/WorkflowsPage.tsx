@@ -15,7 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { WorkflowDefinitionList, WorkflowDefinitionForm } from '@/components/workflows'
+import { WorkflowDefinitionList, WorkflowDefinitionForm, CustomerSelectionDialog } from '@/components/workflows'
 import { PageHeader } from '@/components/shared'
 import {
   useWorkflowDefinitions,
@@ -27,6 +27,10 @@ import {
 } from '@/hooks/queries'
 import { useAuthStore } from '@/stores/authStore'
 import type { WorkflowDefinition, WorkflowDefinitionCreate } from '@/types/workflow'
+import type { Customer } from '@/types/customer'
+
+// Workflow types that require customer selection
+const CUSTOMER_CENTRIC_WORKFLOWS = ['document_request', 'sar_filing']
 
 export default function WorkflowsPage() {
   const user = useAuthStore((state) => state.user)
@@ -34,6 +38,8 @@ export default function WorkflowsPage() {
   const [editingDefinition, setEditingDefinition] = useState<WorkflowDefinition | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [deletingDefinition, setDeletingDefinition] = useState<WorkflowDefinition | null>(null)
+  const [customerDialogOpen, setCustomerDialogOpen] = useState(false)
+  const [runningDefinition, setRunningDefinition] = useState<WorkflowDefinition | null>(null)
 
   // Definitions data
   const { data: definitions, isLoading, refetch } = useWorkflowDefinitions()
@@ -81,11 +87,23 @@ export default function WorkflowsPage() {
     }
   }
 
-  const handleRunDefinition = async (definition: WorkflowDefinition) => {
+  const handleRunDefinition = (definition: WorkflowDefinition) => {
+    // Check if this workflow type requires customer selection
+    if (CUSTOMER_CENTRIC_WORKFLOWS.includes(definition.workflow_type)) {
+      setRunningDefinition(definition)
+      setCustomerDialogOpen(true)
+    } else {
+      // Run workflow directly without customer selection
+      runWorkflowDirectly(definition)
+    }
+  }
+
+  const runWorkflowDirectly = async (definition: WorkflowDefinition, customerId?: string) => {
     try {
       const result = await runWorkflow.mutateAsync({
         id: definition.id,
         triggered_by_user_id: user?.id,
+        parameters: customerId ? { customer_id: customerId } : undefined,
       })
       if (result.status === 'running') {
         toast.success(`Workflow started: ${definition.name}`)
@@ -97,6 +115,14 @@ export default function WorkflowsPage() {
     } catch (error) {
       toast.error('Failed to run workflow')
     }
+  }
+
+  const handleCustomerSelected = async (customer: Customer) => {
+    if (!runningDefinition) return
+
+    await runWorkflowDirectly(runningDefinition, customer.id)
+    setCustomerDialogOpen(false)
+    setRunningDefinition(null)
   }
 
   const handleViewHistory = (definition: WorkflowDefinition) => {
@@ -231,6 +257,19 @@ export default function WorkflowsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Customer Selection Dialog for customer-centric workflows */}
+      <CustomerSelectionDialog
+        open={customerDialogOpen}
+        onOpenChange={(open) => {
+          setCustomerDialogOpen(open)
+          if (!open) setRunningDefinition(null)
+        }}
+        onSelect={handleCustomerSelected}
+        title={`Run ${runningDefinition?.name || 'Workflow'}`}
+        description={`Select a customer to run the ${runningDefinition?.name || 'workflow'} for.`}
+        isLoading={runWorkflow.isPending}
+      />
     </div>
   )
 }

@@ -1,7 +1,7 @@
 import {
   StatsOverview,
   RecentAlerts,
-  RecentTransactions,
+  MyTasks,
   RiskDistribution,
 } from '@/components/dashboard'
 
@@ -24,8 +24,8 @@ export default function DashboardPage() {
         {/* Recent Alerts */}
         <RecentAlerts />
 
-        {/* Recent Transactions */}
-        <RecentTransactions />
+        {/* My Tasks */}
+        <MyTasks />
       </div>
 
       {/* Risk Distribution */}

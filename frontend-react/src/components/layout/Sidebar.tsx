@@ -170,7 +170,8 @@ export function Sidebar() {
       <div className="border-t border-border p-4">
         <div className="text-xs text-muted-foreground text-center">
           <p>AML Compliance Platform</p>
-          <p className="mt-1">v2.0 (React)</p>
+          <p className="mt-1">v2.0</p>
+          <p className="mt-2">&copy; {new Date().getFullYear()} TrustRelay</p>
         </div>
       </div>
     </aside>

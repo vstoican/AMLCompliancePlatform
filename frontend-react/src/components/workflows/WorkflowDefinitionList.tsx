@@ -36,12 +36,10 @@ const scheduleTypeConfig: Record<ScheduleType, { icon: typeof Clock; label: stri
   manual: { icon: Hand, label: 'Manual', color: 'bg-gray-500/10 text-gray-500 border-gray-500/20' },
 }
 
-const workflowTypeConfig: Record<WorkflowType, { icon: typeof GitBranch; label: string }> = {
+const workflowTypeConfig: Partial<Record<WorkflowType, { icon: typeof GitBranch; label: string }>> = {
   kyc_refresh: { icon: GitBranch, label: 'KYC Refresh' },
   sanctions_screening: { icon: AlertTriangle, label: 'Sanctions Screening' },
-  investigation: { icon: GitBranch, label: 'Investigation' },
   document_request: { icon: GitBranch, label: 'Document Request' },
-  escalation: { icon: GitBranch, label: 'Escalation' },
   sar_filing: { icon: GitBranch, label: 'SAR Filing' },
 }
 

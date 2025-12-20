@@ -35,7 +35,7 @@ export interface StartAlertWorkflowRequest {
 // WORKFLOW DEFINITIONS
 // =============================================================================
 
-export type WorkflowType = 'kyc_refresh' | 'sanctions_screening' | 'investigation' | 'document_request' | 'escalation' | 'sar_filing'
+export type WorkflowType = 'kyc_refresh' | 'sanctions_screening' | 'document_request' | 'sar_filing'
 export type ScheduleType = 'cron' | 'event' | 'manual'
 export type Severity = 'low' | 'medium' | 'high' | 'critical'
 

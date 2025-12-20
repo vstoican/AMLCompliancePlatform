@@ -423,9 +423,7 @@ async def run_workflow(definition_id: int, request: WorkflowRunRequest):
                 from src.workflows.worker import (
                     KycRefreshWorkflow,
                     SanctionsScreeningWorkflow,
-                    InvestigationWorkflow,
                     DocumentRequestWorkflow,
-                    EscalationWorkflow,
                     SarFilingWorkflow,
                     BUSINESS_TASK_QUEUE,
                 )
@@ -433,9 +431,7 @@ async def run_workflow(definition_id: int, request: WorkflowRunRequest):
                 workflow_map = {
                     "kyc_refresh": KycRefreshWorkflow,
                     "sanctions_screening": SanctionsScreeningWorkflow,
-                    "investigation": InvestigationWorkflow,
                     "document_request": DocumentRequestWorkflow,
-                    "escalation": EscalationWorkflow,
                     "sar_filing": SarFilingWorkflow,
                 }
 
@@ -457,12 +453,18 @@ async def run_workflow(definition_id: int, request: WorkflowRunRequest):
                         parameters.get("customer_id", ""),
                         parameters.get("hit_detected", False),
                     ]
-                elif workflow_type in ("investigation", "document_request", "escalation", "sar_filing"):
+                elif workflow_type in ("document_request", "sar_filing"):
                     # These workflows expect (customer_id, task_id, details)
+                    # Pass workflow_definition_id so workflow can create task if needed
+                    workflow_params = {
+                        **parameters,
+                        "workflow_definition_id": definition_id,
+                        "workflow_id": workflow_id,
+                    }
                     workflow_args = [
                         parameters.get("customer_id"),
                         parameters.get("task_id", 0),
-                        parameters,
+                        workflow_params,
                     ]
                 else:
                     workflow_args = [parameters]
