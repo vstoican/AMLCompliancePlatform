@@ -41,7 +41,7 @@ from .users import router as users_router
 from .alerts import router as alerts_router
 from .ai_assistant import router as ai_router
 
-app = FastAPI(title="AML Compliance MVP", version="0.1.0")
+app = FastAPI(title="AML Compliance MVP", version="0.1.0", redoc_url=None)
 
 app.add_middleware(
     CORSMiddleware,

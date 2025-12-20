@@ -15,7 +15,7 @@ import {
 import { PageHeader } from '@/components/shared'
 import { useUsers } from '@/hooks/queries'
 
-// System roles configuration
+// System roles configuration - matches backend USER_ROLES
 const systemRoles = [
   {
     id: 'admin',
@@ -44,13 +44,6 @@ const systemRoles = [
     description: 'Review alerts and customer profiles',
     permissions: ['read:customers', 'read:alerts', 'write:alerts'],
     color: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
-  },
-  {
-    id: 'auditor',
-    name: 'Read-Only Auditor',
-    description: 'View-only access for compliance audits',
-    permissions: ['read:customers', 'read:alerts', 'read:reports'],
-    color: 'bg-teal-500/10 text-teal-500 border-teal-500/20',
   },
 ]
 
@@ -143,6 +136,7 @@ export default function RolesPage() {
                     <TableHead>Resource</TableHead>
                     <TableHead className="text-center">Admin</TableHead>
                     <TableHead className="text-center">Manager</TableHead>
+                    <TableHead className="text-center">Sr. Analyst</TableHead>
                     <TableHead className="text-center">Analyst</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -158,6 +152,11 @@ export default function RolesPage() {
                       <TableCell className="text-center">
                         <Badge variant="outline" className={permissionBadgeColor[row.manager]}>
                           {row.manager}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Badge variant="outline" className={permissionBadgeColor[row.senior_analyst]}>
+                          {row.senior_analyst}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-center">
