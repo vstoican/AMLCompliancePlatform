@@ -356,6 +356,59 @@ def _extract_text_response(response: str) -> str:
     return response
 
 
+def _extract_json_from_response(response: str) -> dict | None:
+    """Extract JSON object from AI response, handling various formats"""
+    import re
+
+    response = response.strip()
+
+    def try_parse_json(text: str) -> dict | None:
+        """Try to parse JSON, handling common AI formatting issues"""
+        text = text.strip()
+        # Remove backslash line continuations (common AI mistake)
+        text = re.sub(r'\\\s*\n\s*', ' ', text)
+        # Remove trailing backslashes
+        text = re.sub(r'\\\s*"', '"', text)
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+        return None
+
+    # Try 1: Direct JSON parse
+    result = try_parse_json(response)
+    if result:
+        return result
+
+    # Try 2: Extract from markdown code block (```json ... ``` or ``` ... ```)
+    code_block_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response, re.DOTALL)
+    if code_block_match:
+        result = try_parse_json(code_block_match.group(1))
+        if result:
+            return result
+
+    # Try 3: Find JSON object anywhere in the response
+    # Look for { ... } patterns
+    brace_start = response.find('{')
+    if brace_start != -1:
+        # Find matching closing brace
+        depth = 0
+        for i in range(brace_start, len(response)):
+            if response[i] == '{':
+                depth += 1
+            elif response[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    result = try_parse_json(response[brace_start:i+1])
+                    if result:
+                        return result
+                    break
+
+    return None
+
+
 # =============================================================================
 # CHAT ENDPOINT
 # =============================================================================
@@ -390,63 +443,53 @@ async def chat(request: ChatRequest, conn: AsyncConnection = Depends(connection)
         query_results = None
         final_response = ai_response
 
-        # Try to parse as JSON (handle markdown code blocks)
-        try:
-            json_str = ai_response.strip()
-            # Remove markdown code blocks if present
-            if json_str.startswith("```"):
-                lines = json_str.split("\n")
-                # Remove first line (```json or ```) and last line (```)
-                lines = [l for l in lines if not l.strip().startswith("```")]
-                json_str = "\n".join(lines)
+        # Extract JSON from anywhere in the response
+        parsed = _extract_json_from_response(ai_response)
 
-            parsed = json.loads(json_str)
-            if isinstance(parsed, dict):
-                tool = parsed.get("tool", "").lower()
+        if parsed:
+            tool = parsed.get("tool", "").lower()
 
-                # Handle database query tool
-                if tool == "query" or (parsed.get("needs_query") and parsed.get("sql_query")):
-                    sql_query = parsed.get("sql_query")
-                    if sql_query:
-                        # Execute via MCP
-                        query_results = await _execute_mcp_query(sql_query)
+            # Handle database query tool
+            if tool == "query" or (parsed.get("needs_query") and parsed.get("sql_query")):
+                sql_query = parsed.get("sql_query")
+                if sql_query:
+                    # Execute via MCP
+                    query_results = await _execute_mcp_query(sql_query)
 
-                        # Get AI to analyze the results
-                        analysis_prompt = f"""Query results:
+                    # Get AI to analyze the results
+                    analysis_prompt = f"""Query results:
 {json.dumps(query_results, default=str, indent=2)}
 
-Analyze these results and provide a helpful summary for the compliance officer."""
-
-                        conversation.append({"role": "assistant", "content": ai_response})
-                        conversation.append({"role": "user", "content": analysis_prompt})
-
-                        analysis_response = await _call_ai(conversation, settings)
-                        final_response = _extract_text_response(analysis_response)
-
-                # Handle calculator tool
-                elif tool == "calculate" and parsed.get("expression"):
-                    expression = parsed["expression"]
-                    calc_result = await _execute_calculation(expression)
-
-                    # Get AI to explain the result
-                    analysis_prompt = f"""Calculation result:
-Expression: {expression}
-Result: {calc_result.get('result')} ({calc_result.get('formatted')})
-
-Explain this result in the context of the user's question."""
+Analyze these results and provide a helpful summary for the compliance officer. Do NOT output any JSON - just provide a clear, formatted response using markdown."""
 
                     conversation.append({"role": "assistant", "content": ai_response})
                     conversation.append({"role": "user", "content": analysis_prompt})
 
                     analysis_response = await _call_ai(conversation, settings)
                     final_response = _extract_text_response(analysis_response)
-                    query_results = [calc_result]
 
-                # No tool needed
-                else:
-                    final_response = parsed.get("explanation", ai_response)
-        except json.JSONDecodeError:
-            pass
+            # Handle calculator tool
+            elif tool == "calculate" and parsed.get("expression"):
+                expression = parsed["expression"]
+                calc_result = await _execute_calculation(expression)
+
+                # Get AI to explain the result
+                analysis_prompt = f"""Calculation result:
+Expression: {expression}
+Result: {calc_result.get('result')} ({calc_result.get('formatted')})
+
+Explain this result in the context of the user's question. Do NOT output any JSON - just provide a clear response."""
+
+                conversation.append({"role": "assistant", "content": ai_response})
+                conversation.append({"role": "user", "content": analysis_prompt})
+
+                analysis_response = await _call_ai(conversation, settings)
+                final_response = _extract_text_response(analysis_response)
+                query_results = [calc_result]
+
+            # No tool needed
+            else:
+                final_response = parsed.get("explanation", ai_response)
 
         conversation.append({"role": "assistant", "content": final_response})
 
