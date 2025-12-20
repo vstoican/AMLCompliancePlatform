@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/lib/api'
+import { useAuthStore } from '@/stores/authStore'
 import type { Alert, AlertNote, AlertFilters, AlertDefinition } from '@/types/alert'
 
 interface AlertsResponse {
@@ -59,11 +60,14 @@ export function useAlertNotes(alertId: number | null) {
 
 export function useAssignAlert() {
   const queryClient = useQueryClient()
+  const user = useAuthStore((state) => state.user)
 
   return useMutation({
     mutationFn: async ({ alertId, userId }: { alertId: number; userId: string }) => {
       const { data } = await api.post<Alert>(`/alerts/${alertId}/assign`, {
         assigned_to: userId,
+        current_user_id: user?.id,
+        current_user_role: user?.role || 'analyst',
       })
       return data
     },
@@ -76,12 +80,15 @@ export function useAssignAlert() {
 
 export function useEscalateAlert() {
   const queryClient = useQueryClient()
+  const user = useAuthStore((state) => state.user)
 
   return useMutation({
     mutationFn: async ({ alertId, userId, reason }: { alertId: number; userId: string; reason?: string }) => {
       const { data } = await api.post<Alert>(`/alerts/${alertId}/escalate`, {
         escalated_to: userId,
-        reason,
+        reason: reason || 'Escalated for review',
+        current_user_id: user?.id,
+        current_user_role: user?.role || 'analyst',
       })
       return data
     },
@@ -94,6 +101,7 @@ export function useEscalateAlert() {
 
 export function useResolveAlert() {
   const queryClient = useQueryClient()
+  const user = useAuthStore((state) => state.user)
 
   return useMutation({
     mutationFn: async ({
@@ -108,6 +116,8 @@ export function useResolveAlert() {
       const { data } = await api.post<Alert>(`/alerts/${alertId}/resolve`, {
         resolution_type: resolutionType,
         resolution_notes: notes,
+        current_user_id: user?.id,
+        current_user_role: user?.role || 'analyst',
       })
       return data
     },
@@ -120,11 +130,14 @@ export function useResolveAlert() {
 
 export function useHoldAlert() {
   const queryClient = useQueryClient()
+  const user = useAuthStore((state) => state.user)
 
   return useMutation({
     mutationFn: async ({ alertId, reason }: { alertId: number; reason: string }) => {
       const { data } = await api.post<Alert>(`/alerts/${alertId}/hold`, {
         reason,
+        current_user_id: user?.id,
+        current_user_role: user?.role || 'analyst',
       })
       return data
     },
@@ -137,11 +150,14 @@ export function useHoldAlert() {
 
 export function useAddAlertNote() {
   const queryClient = useQueryClient()
+  const user = useAuthStore((state) => state.user)
 
   return useMutation({
     mutationFn: async ({ alertId, content }: { alertId: number; content: string }) => {
       const { data } = await api.post<AlertNote>(`/alerts/${alertId}/notes`, {
         content,
+        current_user_id: user?.id,
+        current_user_role: user?.role || 'analyst',
       })
       return data
     },

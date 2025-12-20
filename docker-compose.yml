@@ -78,6 +78,31 @@ services:
     deploy:
       replicas: 4  # Run 4 consumers for higher throughput
 
+  alert-processor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_HOST=timescaledb
+      - DATABASE_PORT=5432
+      - DATABASE_NAME=aml
+      - DATABASE_USER=aml_user
+      - DATABASE_PASSWORD=aml_pass
+      - NATS_URL=nats://nats:4222
+      - TEMPORAL_HOST=temporal
+      - TEMPORAL_PORT=7233
+    command: ["python", "-m", "src.workers.alert_processor"]
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+      nats:
+        condition: service_started
+    restart: unless-stopped
+
   frontend:
     build:
       context: ./frontend-react
@@ -149,9 +174,9 @@ services:
     restart: "no"
 
   temporal:
-    image: temporalio/auto-setup:1.22.5
+    image: temporalio/auto-setup:latest
     environment:
-      - DB=postgresql
+      - DB=postgres12
       - DB_PORT=5432
       - POSTGRES_USER=aml_user
       - POSTGRES_PWD=aml_pass

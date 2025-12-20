@@ -26,8 +26,12 @@ export default function TasksPage() {
   const completeTask = useCompleteTask()
 
   const handleClaim = async (task: Task) => {
+    if (!user?.id) {
+      toast.error('You must be logged in to claim a task')
+      return
+    }
     try {
-      await claimTask.mutateAsync(task.id)
+      await claimTask.mutateAsync({ taskId: task.id, userId: user.id })
       toast.success('Task claimed', {
         description: `You are now assigned to "${task.title}"`,
       })
@@ -71,6 +75,19 @@ export default function TasksPage() {
         description="Manage investigation tasks and workflow items"
         icon={ClipboardList}
       >
+        <ToggleGroup
+          type="single"
+          value={viewMode}
+          onValueChange={(value: string) => value && setViewMode(value as ViewMode)}
+          className="bg-muted rounded-lg p-1"
+        >
+          <ToggleGroupItem value="board" aria-label="Board view" className="px-3">
+            <LayoutGrid className="h-4 w-4" />
+          </ToggleGroupItem>
+          <ToggleGroupItem value="list" aria-label="List view" className="px-3">
+            <List className="h-4 w-4" />
+          </ToggleGroupItem>
+        </ToggleGroup>
         <Button variant="outline" size="sm" onClick={() => refetch()}>
           <RefreshCw className="h-4 w-4 mr-2" />
           Refresh
@@ -83,15 +100,23 @@ export default function TasksPage() {
 
       <TaskFilters filters={filters} onFiltersChange={setFilters} />
 
-      <TaskList
-        tasks={data?.tasks || []}
-        isLoading={isLoading}
-        onClaim={handleClaim}
-        onRelease={handleRelease}
-        onComplete={handleComplete}
-        onClick={handleTaskClick}
-        currentUserId={user?.id}
-      />
+      {viewMode === 'board' ? (
+        <TaskKanbanBoard
+          tasks={data?.tasks || []}
+          isLoading={isLoading}
+          onClick={handleTaskClick}
+        />
+      ) : (
+        <TaskList
+          tasks={data?.tasks || []}
+          isLoading={isLoading}
+          onClaim={handleClaim}
+          onRelease={handleRelease}
+          onComplete={handleComplete}
+          onClick={handleTaskClick}
+          currentUserId={user?.id}
+        />
+      )}
 
       <TaskDetailSheet
         taskId={selectedTaskId}

@@ -25,6 +25,9 @@ from src.api.models import (
     AlertNoteCreate,
     AlertReopen,
     AlertResolve,
+    AlertStart,
+    AlertUnassign,
+    AlertResume,
 )
 from src.api.s3 import delete_file, download_file, upload_file
 from src.workflows.worker import AlertLifecycleWorkflow
@@ -208,98 +211,105 @@ async def get_alert(alert_id: int):
 # LIFECYCLE ACTIONS (via Temporal)
 # =============================================================================
 
+def _get_user_context(body, query_user_id: Optional[UUID], query_role: str) -> tuple[str, str]:
+    """Get user ID and role from body or fall back to query params"""
+    user_id = str(body.current_user_id) if body.current_user_id else (str(query_user_id) if query_user_id else None)
+    if not user_id:
+        raise HTTPException(400, "current_user_id is required (in body or query params)")
+    role = body.current_user_role if body.current_user_role != "analyst" else query_role
+    return user_id, role
+
+
 @router.post("/{alert_id}/assign")
 async def assign_alert(
     alert_id: int,
     body: AlertAssign,
-    current_user_id: UUID = Query(..., description="Current user ID"),
-    current_user_role: str = Query("analyst", description="Current user role"),
+    current_user_id: Optional[UUID] = Query(None, description="Current user ID (deprecated, use body)"),
+    current_user_role: str = Query("analyst", description="Current user role (deprecated, use body)"),
 ):
     """Assign an alert to a user (self or by manager)"""
+    user_id, role = _get_user_context(body, current_user_id, current_user_role)
     params = {
         "assigned_to": str(body.assigned_to),
         "assigned_by": str(body.assigned_by) if body.assigned_by else None,
     }
-    return await _execute_alert_action(
-        alert_id, "assign", str(current_user_id), current_user_role, params
-    )
+    return await _execute_alert_action(alert_id, "assign", user_id, role, params)
 
 
 @router.post("/{alert_id}/unassign")
 async def unassign_alert(
     alert_id: int,
-    current_user_id: UUID = Query(..., description="Current user ID"),
-    current_user_role: str = Query("analyst", description="Current user role"),
+    body: AlertUnassign = AlertUnassign(),
+    current_user_id: Optional[UUID] = Query(None, description="Current user ID (deprecated, use body)"),
+    current_user_role: str = Query("analyst", description="Current user role (deprecated, use body)"),
 ):
     """Unassign an alert (back to open)"""
-    return await _execute_alert_action(
-        alert_id, "unassign", str(current_user_id), current_user_role, {}
-    )
+    user_id, role = _get_user_context(body, current_user_id, current_user_role)
+    return await _execute_alert_action(alert_id, "unassign", user_id, role, {})
 
 
 @router.post("/{alert_id}/start")
 async def start_alert_work(
     alert_id: int,
-    current_user_id: UUID = Query(..., description="Current user ID"),
-    current_user_role: str = Query("analyst", description="Current user role"),
+    body: AlertStart = AlertStart(),
+    current_user_id: Optional[UUID] = Query(None, description="Current user ID (deprecated, use body)"),
+    current_user_role: str = Query("analyst", description="Current user role (deprecated, use body)"),
 ):
     """Start work on an assigned alert (assigned -> in_progress)"""
-    return await _execute_alert_action(
-        alert_id, "start", str(current_user_id), current_user_role, {}
-    )
+    user_id, role = _get_user_context(body, current_user_id, current_user_role)
+    return await _execute_alert_action(alert_id, "start", user_id, role, {})
 
 
 @router.post("/{alert_id}/escalate")
 async def escalate_alert(
     alert_id: int,
     body: AlertEscalate,
-    current_user_id: UUID = Query(..., description="Current user ID"),
-    current_user_role: str = Query("analyst", description="Current user role"),
+    current_user_id: Optional[UUID] = Query(None, description="Current user ID (deprecated, use body)"),
+    current_user_role: str = Query("analyst", description="Current user role (deprecated, use body)"),
 ):
     """Escalate an alert to a senior/manager"""
+    user_id, role = _get_user_context(body, current_user_id, current_user_role)
     params = {
         "escalated_to": str(body.escalated_to),
         "reason": body.reason,
     }
-    return await _execute_alert_action(
-        alert_id, "escalate", str(current_user_id), current_user_role, params
-    )
+    return await _execute_alert_action(alert_id, "escalate", user_id, role, params)
 
 
 @router.post("/{alert_id}/hold")
 async def hold_alert(
     alert_id: int,
     body: AlertHold = AlertHold(),
-    current_user_id: UUID = Query(..., description="Current user ID"),
-    current_user_role: str = Query("analyst", description="Current user role"),
+    current_user_id: Optional[UUID] = Query(None, description="Current user ID (deprecated, use body)"),
+    current_user_role: str = Query("analyst", description="Current user role (deprecated, use body)"),
 ):
     """Put an alert on hold"""
+    user_id, role = _get_user_context(body, current_user_id, current_user_role)
     params = {"reason": body.reason}
-    return await _execute_alert_action(
-        alert_id, "hold", str(current_user_id), current_user_role, params
-    )
+    return await _execute_alert_action(alert_id, "hold", user_id, role, params)
 
 
 @router.post("/{alert_id}/resume")
 async def resume_alert(
     alert_id: int,
-    current_user_id: UUID = Query(..., description="Current user ID"),
-    current_user_role: str = Query("analyst", description="Current user role"),
+    body: AlertResume = AlertResume(),
+    current_user_id: Optional[UUID] = Query(None, description="Current user ID (deprecated, use body)"),
+    current_user_role: str = Query("analyst", description="Current user role (deprecated, use body)"),
 ):
     """Resume work on an alert (on_hold/escalated -> in_progress)"""
-    return await _execute_alert_action(
-        alert_id, "resume", str(current_user_id), current_user_role, {}
-    )
+    user_id, role = _get_user_context(body, current_user_id, current_user_role)
+    return await _execute_alert_action(alert_id, "resume", user_id, role, {})
 
 
 @router.post("/{alert_id}/resolve")
 async def resolve_alert(
     alert_id: int,
     body: AlertResolve,
-    current_user_id: UUID = Query(..., description="Current user ID"),
-    current_user_role: str = Query("analyst", description="Current user role"),
+    current_user_id: Optional[UUID] = Query(None, description="Current user ID (deprecated, use body)"),
+    current_user_role: str = Query("analyst", description="Current user role (deprecated, use body)"),
 ):
     """Resolve an alert with a resolution type"""
+    user_id, role = _get_user_context(body, current_user_id, current_user_role)
     if body.resolution_type not in RESOLUTION_TYPES:
         raise HTTPException(400, f"Invalid resolution_type. Must be one of: {RESOLUTION_TYPES}")
 
@@ -307,26 +317,23 @@ async def resolve_alert(
         "resolution_type": body.resolution_type,
         "resolution_notes": body.resolution_notes,
     }
-    return await _execute_alert_action(
-        alert_id, "resolve", str(current_user_id), current_user_role, params
-    )
+    return await _execute_alert_action(alert_id, "resolve", user_id, role, params)
 
 
 @router.post("/{alert_id}/reopen")
 async def reopen_alert(
     alert_id: int,
     body: AlertReopen = AlertReopen(),
-    current_user_id: UUID = Query(..., description="Current user ID"),
-    current_user_role: str = Query("manager", description="Current user role"),
+    current_user_id: Optional[UUID] = Query(None, description="Current user ID (deprecated, use body)"),
+    current_user_role: str = Query("manager", description="Current user role (deprecated, use body)"),
 ):
     """Reopen a resolved alert (manager only)"""
-    if current_user_role not in ("manager", "admin"):
+    user_id, role = _get_user_context(body, current_user_id, current_user_role)
+    if role not in ("manager", "admin"):
         raise HTTPException(403, "Only managers can reopen alerts")
 
     params = {"reason": body.reason}
-    return await _execute_alert_action(
-        alert_id, "reopen", str(current_user_id), current_user_role, params
-    )
+    return await _execute_alert_action(alert_id, "reopen", user_id, role, params)
 
 
 # =============================================================================
@@ -403,17 +410,16 @@ async def list_alert_notes(alert_id: int):
 async def add_alert_note(
     alert_id: int,
     body: AlertNoteCreate,
-    current_user_id: UUID = Query(..., description="Current user ID"),
-    current_user_role: str = Query("analyst", description="Current user role"),
+    current_user_id: Optional[UUID] = Query(None, description="Current user ID (deprecated, use body)"),
+    current_user_role: str = Query("analyst", description="Current user role (deprecated, use body)"),
 ):
     """Add a note to an alert (via Temporal for audit)"""
+    user_id, role = _get_user_context(body, current_user_id, current_user_role)
     params = {
         "content": body.content,
         "note_type": body.note_type,
     }
-    return await _execute_alert_action(
-        alert_id, "add_note", str(current_user_id), current_user_role, params
-    )
+    return await _execute_alert_action(alert_id, "add_note", user_id, role, params)
 
 
 @router.delete("/{alert_id}/notes/{note_id}")

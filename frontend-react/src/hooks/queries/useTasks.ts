@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import api from '@/lib/api'
+import { useAuthStore } from '@/stores/authStore'
 import type { Task, TaskFilters } from '@/types/task'
 
 interface UseTasksOptions extends TaskFilters {
@@ -76,11 +77,11 @@ export function useClaimTask() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async (taskId: number) => {
-      const { data } = await api.post<Task>(`/tasks/${taskId}/claim`)
+    mutationFn: async ({ taskId, userId }: { taskId: number; userId: string }) => {
+      const { data } = await api.post<Task>(`/tasks/${taskId}/claim`, { assigned_to: userId })
       return data
     },
-    onSuccess: (_, taskId) => {
+    onSuccess: (_, { taskId }) => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['task', taskId] })
     },
@@ -104,10 +105,14 @@ export function useReleaseTask() {
 
 export function useCompleteTask() {
   const queryClient = useQueryClient()
+  const user = useAuthStore((state) => state.user)
 
   return useMutation({
     mutationFn: async ({ taskId, notes }: { taskId: number; notes?: string }) => {
-      const { data } = await api.post<Task>(`/tasks/${taskId}/complete`, { notes })
+      const { data } = await api.post<Task>(`/tasks/${taskId}/complete`, {
+        resolution_notes: notes,
+        completed_by_id: user?.id,
+      })
       return data
     },
     onSuccess: (_, variables) => {

@@ -259,9 +259,6 @@ class Task(BaseModel):
     assigned_to: Optional[UUID] = None
     assigned_by: Optional[UUID] = None
     assigned_at: Optional[datetime] = None
-    claimed_by_id: Optional[UUID] = None
-    claimed_by: Optional[str] = None  # Legacy text field for backward compatibility
-    claimed_at: Optional[datetime] = None
     # Workflow fields
     workflow_id: Optional[str] = None
     workflow_run_id: Optional[str] = None
@@ -284,9 +281,8 @@ class Task(BaseModel):
     customer_risk_level: Optional[str] = None
     alert_scenario: Optional[str] = None
     alert_severity: Optional[str] = None
-    # Joined user names
+    # Joined user name
     assigned_to_name: Optional[str] = None
-    claimed_by_name: Optional[str] = None
 
 
 class TaskCreate(BaseModel):
@@ -311,7 +307,7 @@ class TaskUpdate(BaseModel):
 
 
 class TaskClaim(BaseModel):
-    claimed_by_id: UUID  # Changed to UUID reference
+    assigned_to: UUID  # User ID claiming/assigning the task
 
 
 class TaskComplete(BaseModel):
@@ -497,32 +493,53 @@ class AlertFull(BaseModel):
     escalated_to_name: Optional[str] = None
 
 
-class AlertAssign(BaseModel):
+class AlertActionRequest(BaseModel):
+    """Base model for alert action requests with user context"""
+    current_user_id: Optional[UUID] = None
+    current_user_role: str = "analyst"
+
+
+class AlertAssign(AlertActionRequest):
     """Request to assign an alert"""
     assigned_to: UUID
     assigned_by: Optional[UUID] = None  # None if self-assigning
 
 
-class AlertEscalate(BaseModel):
+class AlertEscalate(AlertActionRequest):
     """Request to escalate an alert"""
     escalated_to: UUID
     reason: str
 
 
-class AlertResolve(BaseModel):
+class AlertResolve(AlertActionRequest):
     """Request to resolve an alert"""
     resolution_type: str = Field(..., description="One of: confirmed_suspicious, false_positive, not_suspicious, duplicate, other")
     resolution_notes: Optional[str] = None
 
 
-class AlertHold(BaseModel):
+class AlertHold(AlertActionRequest):
     """Request to put an alert on hold"""
     reason: Optional[str] = None
 
 
-class AlertReopen(BaseModel):
+class AlertReopen(AlertActionRequest):
     """Request to reopen an alert (manager only)"""
     reason: Optional[str] = None
+
+
+class AlertStart(AlertActionRequest):
+    """Request to start work on an alert"""
+    pass
+
+
+class AlertUnassign(AlertActionRequest):
+    """Request to unassign an alert"""
+    pass
+
+
+class AlertResume(AlertActionRequest):
+    """Request to resume work on an alert"""
+    pass
 
 
 # =============================================================================
@@ -541,7 +558,8 @@ class AlertNote(BaseModel):
     user_name: Optional[str] = None
 
 
-class AlertNoteCreate(BaseModel):
+class AlertNoteCreate(AlertActionRequest):
+    """Request to add a note to an alert"""
     content: str
     note_type: str = "comment"
 

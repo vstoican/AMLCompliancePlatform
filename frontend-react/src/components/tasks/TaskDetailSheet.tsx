@@ -141,10 +141,10 @@ export function TaskDetailSheet({
                       <span className="text-sm text-muted-foreground">Completed At</span>
                       <span className="text-sm">{formatDateTime(task.completed_at)}</span>
                     </div>
-                    {task.completion_notes && (
+                    {task.resolution_notes && (
                       <div className="pt-2 border-t">
                         <p className="text-sm text-muted-foreground mb-1">Notes</p>
-                        <p className="text-sm">{task.completion_notes}</p>
+                        <p className="text-sm">{task.resolution_notes}</p>
                       </div>
                     )}
                   </div>

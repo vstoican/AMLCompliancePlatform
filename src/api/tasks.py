@@ -1,6 +1,7 @@
 """
 Task Management API endpoints
 """
+import logging
 import os
 import uuid as uuid_module
 from datetime import datetime
@@ -35,12 +36,56 @@ from .models import (
 )
 from . import s3
 
+logger = logging.getLogger(__name__)
+
 # File upload configuration
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))  # 10MB
 ALLOWED_EXTENSIONS = {".pdf", ".doc", ".docx", ".xls", ".xlsx", ".png", ".jpg", ".jpeg", ".txt", ".csv"}
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 definition_router = APIRouter(prefix="/task-definitions", tags=["task-definitions"])
+
+
+# =============================================================================
+# TEMPORAL INTEGRATION HELPER
+# =============================================================================
+
+async def _execute_task_action(
+    task_id: int,
+    action: str,
+    user_id: str,
+    params: dict
+) -> dict:
+    """
+    Execute a task lifecycle action via Temporal workflow.
+    Falls back to direct DB execution if Temporal is unavailable.
+    """
+    from .main import temporal_client
+
+    if temporal_client:
+        try:
+            from src.workflows.worker import TaskLifecycleWorkflow
+
+            workflow_id = f"task-{task_id}-{action}-{uuid_module.uuid4().hex[:8]}"
+
+            handle = await temporal_client.start_workflow(
+                TaskLifecycleWorkflow.run,
+                args=[task_id, action, user_id, params],
+                id=workflow_id,
+                task_queue="aml-tasks",
+            )
+
+            # Wait for result with timeout
+            result = await handle.result()
+            return result
+
+        except Exception as e:
+            logger.warning(f"Temporal workflow failed for task {task_id} action {action}: {e}")
+            # Fall through to direct execution
+
+    # Direct execution fallback (no Temporal)
+    logger.info(f"Executing task action {action} directly (Temporal unavailable)")
+    return {"fallback": True, "action": action, "task_id": task_id}
 
 
 # =============================================================================
@@ -53,8 +98,8 @@ async def list_tasks(
     task_type: Optional[str] = Query(None),
     priority: Optional[str] = Query(None),
     customer_id: Optional[UUID] = Query(None),
-    claimed_by: Optional[str] = Query(None),
-    unclaimed_only: bool = Query(False),
+    assigned_to: Optional[UUID] = Query(None),
+    unassigned_only: bool = Query(False),
     limit: int = Query(100, le=500),
     conn: AsyncConnection = Depends(connection),
 ) -> List[Task]:
@@ -74,11 +119,11 @@ async def list_tasks(
     if customer_id:
         clauses.append("t.customer_id = %s")
         params.append(customer_id)
-    if claimed_by:
-        clauses.append("t.claimed_by = %s")
-        params.append(claimed_by)
-    if unclaimed_only:
-        clauses.append("t.claimed_by IS NULL AND t.status = 'pending'")
+    if assigned_to:
+        clauses.append("t.assigned_to = %s")
+        params.append(str(assigned_to))
+    if unassigned_only:
+        clauses.append("t.assigned_to IS NULL AND t.status = 'pending'")
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
@@ -88,13 +133,11 @@ async def list_tasks(
                c.risk_level as customer_risk_level,
                a.scenario as alert_scenario,
                a.severity as alert_severity,
-               u_assigned.full_name as assigned_to_name,
-               u_claimed.full_name as claimed_by_name
+               u_assigned.full_name as assigned_to_name
         FROM tasks t
         LEFT JOIN customers c ON c.id = t.customer_id
         LEFT JOIN alerts a ON a.id = t.alert_id
         LEFT JOIN users u_assigned ON u_assigned.id = t.assigned_to
-        LEFT JOIN users u_claimed ON u_claimed.id = t.claimed_by_id
         {where}
         ORDER BY
             CASE t.priority
@@ -129,13 +172,11 @@ async def get_task(
                    c.risk_level as customer_risk_level,
                    a.scenario as alert_scenario,
                    a.severity as alert_severity,
-                   u_assigned.full_name as assigned_to_name,
-                   u_claimed.full_name as claimed_by_name
+                   u_assigned.full_name as assigned_to_name
             FROM tasks t
             LEFT JOIN customers c ON c.id = t.customer_id
             LEFT JOIN alerts a ON a.id = t.alert_id
             LEFT JOIN users u_assigned ON u_assigned.id = t.assigned_to
-            LEFT JOIN users u_claimed ON u_claimed.id = t.claimed_by_id
             WHERE t.id = %s
         """, (task_id,))
         row = await cur.fetchone()
@@ -252,69 +293,108 @@ async def claim_task(
     payload: TaskClaim,
     conn: AsyncConnection = Depends(connection),
 ) -> Task:
-    """Claim a task from the shared queue"""
-    async with conn.cursor(row_factory=dict_row) as cur:
-        # Verify user exists
-        await cur.execute("SELECT id, email FROM users WHERE id = %s", (str(payload.claimed_by_id),))
-        user = await cur.fetchone()
-        if not user:
-            raise HTTPException(status_code=400, detail="User not found")
+    """Claim a task from the shared queue (routes through Temporal when available)"""
+    user_id = str(payload.assigned_to)
 
-        # Check if task exists and is claimable
-        await cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
-        task = await cur.fetchone()
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
-        if task["claimed_by_id"] and task["claimed_by_id"] != payload.claimed_by_id:
-            raise HTTPException(
-                status_code=409,
-                detail="Task already claimed by another user"
-            )
-        if task["status"] not in ("pending", "in_progress"):
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot claim completed task"
-            )
+    # Try Temporal workflow first
+    result = await _execute_task_action(task_id, "claim", user_id, {})
 
-        # Claim the task
-        await cur.execute("""
-            UPDATE tasks
-            SET claimed_by_id = %s,
-                claimed_by = %s,
-                claimed_at = NOW(),
-                status = 'in_progress'
-            WHERE id = %s
-            RETURNING *
-        """, (str(payload.claimed_by_id), user["email"], task_id))
-        row = await cur.fetchone()
+    if result.get("fallback"):
+        # Fallback to direct DB execution
+        async with conn.cursor(row_factory=dict_row) as cur:
+            # Verify user exists
+            await cur.execute("SELECT id, email FROM users WHERE id = %s", (user_id,))
+            user = await cur.fetchone()
+            if not user:
+                raise HTTPException(status_code=400, detail="User not found")
 
-    return Task(**_serialize_task(row))
+            # Check if task exists and is claimable
+            await cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+            task = await cur.fetchone()
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+            if task["assigned_to"] and str(task["assigned_to"]) != user_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Task already assigned to another user"
+                )
+            if task["status"] not in ("pending", "in_progress"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot claim completed task"
+                )
+
+            # Claim the task
+            await cur.execute("""
+                UPDATE tasks
+                SET assigned_to = %s,
+                    assigned_at = NOW(),
+                    status = 'in_progress'
+                WHERE id = %s
+                RETURNING *
+            """, (user_id, task_id))
+            row = await cur.fetchone()
+
+        return Task(**_serialize_task(row))
+
+    # Handle Temporal result
+    if not result.get("success"):
+        error = result.get("error", "Unknown error")
+        if "not found" in error.lower():
+            raise HTTPException(status_code=404, detail=error)
+        elif "already assigned" in error.lower():
+            raise HTTPException(status_code=409, detail=error)
+        else:
+            raise HTTPException(status_code=400, detail=error)
+
+    # Re-fetch task to return full data
+    return await get_task(task_id, conn)
 
 
 @router.post("/{task_id}/release", response_model=Task)
 async def release_task(
     task_id: int,
+    user_id: Optional[UUID] = Query(None, description="User releasing the task"),
     conn: AsyncConnection = Depends(connection),
 ) -> Task:
-    """Release a claimed task back to the queue"""
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute("""
-            UPDATE tasks
-            SET claimed_by_id = NULL,
-                claimed_by = NULL,
-                claimed_at = NULL,
-                status = 'pending'
-            WHERE id = %s AND status = 'in_progress'
-            RETURNING *
-        """, (task_id,))
-        row = await cur.fetchone()
-        if not row:
-            raise HTTPException(
-                status_code=404,
-                detail="Task not found or not in progress"
-            )
+    """Release an assigned task back to the queue (routes through Temporal when available)"""
+    # Use system user if not provided
+    release_user_id = str(user_id) if user_id else "00000000-0000-0000-0000-000000000001"
 
-    return Task(**_serialize_task(row))
+    # Try Temporal workflow first
+    result = await _execute_task_action(task_id, "release", release_user_id, {})
+
+    if result.get("fallback"):
+        # Fallback to direct DB execution
+        async with conn.cursor(row_factory=dict_row) as cur:
+            await cur.execute("""
+                UPDATE tasks
+                SET assigned_to = NULL,
+                    assigned_by = NULL,
+                    assigned_at = NULL,
+                    status = 'pending'
+                WHERE id = %s AND status = 'in_progress'
+                RETURNING *
+            """, (task_id,))
+            row = await cur.fetchone()
+            if not row:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Task not found or not in progress"
+                )
+
+        return Task(**_serialize_task(row))
+
+    # Handle Temporal result
+    if not result.get("success"):
+        error = result.get("error", "Unknown error")
+        if "not found" in error.lower():
+            raise HTTPException(status_code=404, detail=error)
+        else:
+            raise HTTPException(status_code=400, detail=error)
+
+    # Re-fetch task to return full data
+    return await get_task(task_id, conn)
 
 
 @router.post("/{task_id}/complete", response_model=Task)
@@ -323,31 +403,53 @@ async def complete_task(
     payload: TaskComplete,
     conn: AsyncConnection = Depends(connection),
 ) -> Task:
-    """Mark a task as completed"""
-    # Get completed_by string from user if ID provided
-    completed_by_str = payload.completed_by
-    if payload.completed_by_id:
+    """Mark a task as completed (routes through Temporal when available)"""
+    # Get user ID
+    user_id = str(payload.completed_by_id) if payload.completed_by_id else "00000000-0000-0000-0000-000000000001"
+
+    # Try Temporal workflow first
+    params = {"resolution_notes": payload.resolution_notes}
+    result = await _execute_task_action(task_id, "complete", user_id, params)
+
+    if result.get("fallback"):
+        # Fallback to direct DB execution
+        # Get completed_by string from user if ID provided
+        completed_by_str = payload.completed_by
+        if payload.completed_by_id:
+            async with conn.cursor(row_factory=dict_row) as cur:
+                await cur.execute("SELECT email FROM users WHERE id = %s", (str(payload.completed_by_id),))
+                user = await cur.fetchone()
+                if user:
+                    completed_by_str = user["email"]
+
         async with conn.cursor(row_factory=dict_row) as cur:
-            await cur.execute("SELECT email FROM users WHERE id = %s", (str(payload.completed_by_id),))
-            user = await cur.fetchone()
-            if user:
-                completed_by_str = user["email"]
+            await cur.execute("""
+                UPDATE tasks
+                SET status = 'completed',
+                    completed_at = NOW(),
+                    completed_by = %s,
+                    resolution_notes = COALESCE(%s, resolution_notes)
+                WHERE id = %s
+                RETURNING *
+            """, (completed_by_str, payload.resolution_notes, task_id))
+            row = await cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Task not found")
 
-    async with conn.cursor(row_factory=dict_row) as cur:
-        await cur.execute("""
-            UPDATE tasks
-            SET status = 'completed',
-                completed_at = NOW(),
-                completed_by = %s,
-                resolution_notes = COALESCE(%s, resolution_notes)
-            WHERE id = %s
-            RETURNING *
-        """, (completed_by_str, payload.resolution_notes, task_id))
-        row = await cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Task not found")
+        return Task(**_serialize_task(row))
 
-    return Task(**_serialize_task(row))
+    # Handle Temporal result
+    if not result.get("success"):
+        error = result.get("error", "Unknown error")
+        if "not found" in error.lower():
+            raise HTTPException(status_code=404, detail=error)
+        elif "already completed" in error.lower():
+            raise HTTPException(status_code=400, detail=error)
+        else:
+            raise HTTPException(status_code=400, detail=error)
+
+    # Re-fetch task to return full data
+    return await get_task(task_id, conn)
 
 
 @router.post("/{task_id}/assign", response_model=Task)
@@ -356,52 +458,67 @@ async def assign_task(
     payload: TaskAssign,
     conn: AsyncConnection = Depends(connection),
 ) -> Task:
-    """Assign a task to a specific user (manager action)"""
-    async with conn.cursor(row_factory=dict_row) as cur:
-        # Verify assignee exists and is active
-        await cur.execute(
-            "SELECT id, email FROM users WHERE id = %s AND is_active = TRUE",
-            (str(payload.assigned_to),)
-        )
-        assignee = await cur.fetchone()
-        if not assignee:
-            raise HTTPException(status_code=400, detail="Assignee not found or inactive")
+    """Assign a task to a specific user (manager action - routes through Temporal when available)"""
+    user_id = str(payload.assigned_by)
+    assigned_to = str(payload.assigned_to)
 
-        # Verify assigner exists
-        await cur.execute("SELECT id FROM users WHERE id = %s", (str(payload.assigned_by),))
-        if not await cur.fetchone():
-            raise HTTPException(status_code=400, detail="Assigner not found")
+    # Try Temporal workflow first
+    params = {"assigned_to": assigned_to}
+    result = await _execute_task_action(task_id, "assign", user_id, params)
 
-        # Check task exists and is assignable
-        await cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
-        task = await cur.fetchone()
-        if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
-        if task["status"] == "completed":
-            raise HTTPException(status_code=400, detail="Cannot assign completed task")
+    if result.get("fallback"):
+        # Fallback to direct DB execution
+        async with conn.cursor(row_factory=dict_row) as cur:
+            # Verify assignee exists and is active
+            await cur.execute(
+                "SELECT id, email FROM users WHERE id = %s AND is_active = TRUE",
+                (assigned_to,)
+            )
+            assignee = await cur.fetchone()
+            if not assignee:
+                raise HTTPException(status_code=400, detail="Assignee not found or inactive")
 
-        # Assign the task
-        await cur.execute("""
-            UPDATE tasks
-            SET assigned_to = %s,
-                assigned_by = %s,
-                assigned_at = NOW(),
-                claimed_by_id = %s,
-                claimed_by = %s,
-                claimed_at = NOW(),
-                status = CASE WHEN status = 'pending' THEN 'in_progress' ELSE status END
-            WHERE id = %s
-            RETURNING *
-        """, (
-            str(payload.assigned_to),
-            str(payload.assigned_by),
-            str(payload.assigned_to),
-            assignee["email"],
-            task_id
-        ))
-        row = await cur.fetchone()
+            # Verify assigner exists
+            await cur.execute("SELECT id FROM users WHERE id = %s", (user_id,))
+            if not await cur.fetchone():
+                raise HTTPException(status_code=400, detail="Assigner not found")
 
-    return Task(**_serialize_task(row))
+            # Check task exists and is assignable
+            await cur.execute("SELECT * FROM tasks WHERE id = %s", (task_id,))
+            task = await cur.fetchone()
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+            if task["status"] == "completed":
+                raise HTTPException(status_code=400, detail="Cannot assign completed task")
+
+            # Assign the task
+            await cur.execute("""
+                UPDATE tasks
+                SET assigned_to = %s,
+                    assigned_by = %s,
+                    assigned_at = NOW(),
+                    status = CASE WHEN status = 'pending' THEN 'in_progress' ELSE status END
+                WHERE id = %s
+                RETURNING *
+            """, (assigned_to, user_id, task_id))
+            row = await cur.fetchone()
+
+        return Task(**_serialize_task(row))
+
+    # Handle Temporal result
+    if not result.get("success"):
+        error = result.get("error", "Unknown error")
+        if "not found" in error.lower():
+            if "assignee" in error.lower():
+                raise HTTPException(status_code=400, detail=error)
+            raise HTTPException(status_code=404, detail=error)
+        elif "completed" in error.lower():
+            raise HTTPException(status_code=400, detail=error)
+        else:
+            raise HTTPException(status_code=400, detail=error)
+
+    # Re-fetch task to return full data
+    return await get_task(task_id, conn)
 
 
 @router.post("/{task_id}/start-workflow", response_model=Task)

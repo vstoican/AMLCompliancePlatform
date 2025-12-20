@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 from uuid import UUID
+import asyncio
 import json
 import logging
 
@@ -73,11 +74,66 @@ app.include_router(ai_router)
 # Global Temporal client
 temporal_client: Optional[TemporalClient] = None
 
+# Background task for pg_notify listener
+_alert_notify_task: Optional[asyncio.Task] = None
+_alert_notify_running = False
+
+
+async def _listen_for_alert_notifications():
+    """
+    Background task that listens for PostgreSQL NOTIFY events on 'alert_created' channel
+    and forwards them to NATS JetStream for workflow orchestration.
+    """
+    global _alert_notify_running
+    _alert_notify_running = True
+    logger = logging.getLogger("alert_notify_listener")
+
+    while _alert_notify_running:
+        try:
+            pool = get_pool()
+            async with pool.connection() as conn:
+                # Set up LISTEN on alert_created channel
+                await conn.execute("LISTEN alert_created")
+                logger.info("Listening for alert_created notifications...")
+
+                # Process notifications
+                gen = conn.notifies()
+                async for notify in gen:
+                    if not _alert_notify_running:
+                        break
+
+                    try:
+                        payload = json.loads(notify.payload)
+                        alert_id = payload.get("alert_id")
+                        scenario = payload.get("scenario")
+                        severity = payload.get("severity")
+
+                        logger.info(f"Alert created: id={alert_id}, scenario={scenario}, severity={severity}")
+
+                        # Publish to NATS JetStream
+                        await publish_event("aml.alert.created", payload)
+
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Invalid JSON in pg_notify payload: {e}")
+                    except Exception as e:
+                        logger.error(f"Error processing alert notification: {e}")
+
+        except asyncio.CancelledError:
+            logger.info("Alert notification listener cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Alert notification listener error: {e}")
+            if _alert_notify_running:
+                # Wait before reconnecting
+                await asyncio.sleep(5)
+
+    logger.info("Alert notification listener stopped")
+
 
 @app.on_event("startup")
 async def startup_event() -> None:
     """Initialize connections on startup"""
-    global temporal_client
+    global temporal_client, _alert_notify_task
 
     # Initialize database pool
     get_pool()
@@ -94,10 +150,26 @@ async def startup_event() -> None:
     except Exception as e:
         logging.error(f"Failed to connect to Temporal: {e}")
 
+    # Start alert notification listener (forwards pg_notify events to NATS)
+    _alert_notify_task = asyncio.create_task(_listen_for_alert_notifications())
+    logging.info("Started alert notification listener")
+
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
     """Gracefully close connections on shutdown"""
+    global _alert_notify_running
+
+    # Stop alert notification listener
+    _alert_notify_running = False
+    if _alert_notify_task:
+        _alert_notify_task.cancel()
+        try:
+            await _alert_notify_task
+        except asyncio.CancelledError:
+            pass
+        logging.info("Stopped alert notification listener")
+
     # Close JetStream connection
     await close_jetstream()
 

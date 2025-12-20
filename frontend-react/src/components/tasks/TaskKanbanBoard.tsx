@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
-import { ClipboardList, Circle, UserCheck, Play, CheckCircle2, XCircle } from 'lucide-react'
-import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
+import { ClipboardList, Circle, Play, CheckCircle2 } from 'lucide-react'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { TaskKanbanCard } from './TaskKanbanCard'
 import { EmptyState, LoadingOverlay } from '@/components/shared'
@@ -29,13 +29,6 @@ const columns: KanbanColumn[] = [
     bgColor: 'bg-slate-500/10',
   },
   {
-    id: 'claimed',
-    title: 'Claimed',
-    icon: UserCheck,
-    color: 'text-blue-500',
-    bgColor: 'bg-blue-500/10',
-  },
-  {
     id: 'in_progress',
     title: 'In Progress',
     icon: Play,
@@ -49,23 +42,14 @@ const columns: KanbanColumn[] = [
     color: 'text-green-500',
     bgColor: 'bg-green-500/10',
   },
-  {
-    id: 'cancelled',
-    title: 'Cancelled',
-    icon: XCircle,
-    color: 'text-red-500',
-    bgColor: 'bg-red-500/10',
-  },
 ]
 
 export function TaskKanbanBoard({ tasks, isLoading = false, onClick }: TaskKanbanBoardProps) {
   const tasksByStatus = useMemo(() => {
     const grouped: Record<Task['status'], Task[]> = {
       pending: [],
-      claimed: [],
       in_progress: [],
       completed: [],
-      cancelled: [],
     }
 
     tasks.forEach((task) => {
@@ -92,8 +76,8 @@ export function TaskKanbanBoard({ tasks, isLoading = false, onClick }: TaskKanba
   }
 
   return (
-    <ScrollArea className="w-full">
-      <div className="flex gap-4 pb-4 min-w-max">
+    <div className="w-full">
+      <div className="grid grid-cols-3 gap-4">
         {columns.map((column) => {
           const columnTasks = tasksByStatus[column.id]
           const Icon = column.icon
@@ -101,7 +85,7 @@ export function TaskKanbanBoard({ tasks, isLoading = false, onClick }: TaskKanba
           return (
             <div
               key={column.id}
-              className="flex flex-col w-[300px] min-w-[300px] shrink-0"
+              className="flex flex-col min-w-0"
             >
               {/* Column Header */}
               <div className={cn(
@@ -145,7 +129,6 @@ export function TaskKanbanBoard({ tasks, isLoading = false, onClick }: TaskKanba
           )
         })}
       </div>
-      <ScrollBar orientation="horizontal" />
-    </ScrollArea>
+    </div>
   )
 }
