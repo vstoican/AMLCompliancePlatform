@@ -3,6 +3,7 @@ import {
   RecentAlerts,
   MyTasks,
   RiskDistribution,
+  TasksOverview,
 } from '@/components/dashboard'
 
 export default function DashboardPage() {
@@ -21,15 +22,12 @@ export default function DashboardPage() {
 
       {/* Main Content Grid */}
       <div className="grid gap-6 lg:grid-cols-2">
-        {/* Recent Alerts */}
-        <RecentAlerts />
-
-        {/* My Tasks */}
         <MyTasks />
+        <TasksOverview />
       </div>
 
-      {/* Risk Distribution */}
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid gap-6 lg:grid-cols-2">
+        <RecentAlerts />
         <RiskDistribution />
       </div>
     </div>

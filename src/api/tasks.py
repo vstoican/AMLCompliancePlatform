@@ -287,10 +287,46 @@ async def update_task(
         RETURNING *
     """
     async with conn.cursor(row_factory=dict_row) as cur:
+        # Get current task state before update
+        await cur.execute("SELECT status, priority, due_date FROM tasks WHERE id = %s", (task_id,))
+        current = await cur.fetchone()
+        if not current:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Perform the update
         await cur.execute(query, params)
         row = await cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Record history for status change
+        if payload.status is not None and payload.status != current["status"]:
+            changed_by = str(payload.changed_by) if payload.changed_by else None
+            await cur.execute("""
+                INSERT INTO task_status_history (task_id, previous_status, new_status, changed_by, reason, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (task_id, current["status"], payload.status, changed_by, f"Status changed from {current['status']} to {payload.status}", '{}'))
+
+        # Record history for priority change
+        if payload.priority is not None and payload.priority != current["priority"]:
+            changed_by = str(payload.changed_by) if payload.changed_by else None
+            await cur.execute("""
+                INSERT INTO task_status_history (task_id, previous_status, new_status, changed_by, reason, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (task_id, current["priority"], f"priority_{payload.priority}", changed_by, f"Priority changed from {current['priority']} to {payload.priority}", '{}'))
+
+        # Record history for due_date change
+        if payload.due_date is not None:
+            current_due = current["due_date"].strftime('%Y-%m-%d') if current["due_date"] else None
+            new_due = payload.due_date.strftime('%Y-%m-%d') if payload.due_date else None
+            if current_due != new_due:
+                changed_by = str(payload.changed_by) if payload.changed_by else None
+                old_date_str = current_due or 'not set'
+                new_date_str = new_due or 'cleared'
+                await cur.execute("""
+                    INSERT INTO task_status_history (task_id, previous_status, new_status, changed_by, reason, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (task_id, current_due, f"due_date_{new_due}" if new_due else "due_date_cleared", changed_by, f"Due date changed from {old_date_str} to {new_date_str}", '{}'))
+
+        await conn.commit()
 
     return Task(**_serialize_task(row))
 
@@ -719,6 +755,12 @@ async def create_task_note(
         """, (task_id, str(payload.user_id), payload.content, user["full_name"]))
         row = await cur.fetchone()
 
+        # Log to history
+        await cur.execute("""
+            INSERT INTO task_status_history (task_id, previous_status, new_status, changed_by, reason, metadata)
+            VALUES (%s, NULL, 'note_added', %s, %s, %s)
+        """, (task_id, str(payload.user_id), f"Note added: {payload.content[:100]}...", '{}'))
+
     return TaskNote(**row)
 
 
@@ -865,6 +907,13 @@ async def upload_task_attachment(
             user["full_name"]
         ))
         row = await cur.fetchone()
+
+        # Log to history
+        await cur.execute("""
+            INSERT INTO task_status_history (task_id, previous_status, new_status, changed_by, reason, metadata)
+            VALUES (%s, NULL, 'attachment_uploaded', %s, %s, %s)
+        """, (task_id, str(user_id), f"File uploaded: {file.filename}", '{}'))
+
         await conn.commit()
 
     return TaskAttachment(**row)
@@ -908,12 +957,13 @@ async def download_task_attachment(
 async def delete_task_attachment(
     task_id: int,
     attachment_id: int,
+    user_id: Optional[UUID] = Query(None, description="User deleting the file"),
     conn: AsyncConnection = Depends(connection),
 ) -> None:
     """Delete a task attachment from S3"""
     async with conn.cursor(row_factory=dict_row) as cur:
         await cur.execute("""
-            SELECT file_path FROM task_attachments
+            SELECT file_path, original_filename FROM task_attachments
             WHERE id = %s AND task_id = %s
         """, (attachment_id, task_id))
         attachment = await cur.fetchone()
@@ -932,6 +982,13 @@ async def delete_task_attachment(
             "DELETE FROM task_attachments WHERE id = %s",
             (attachment_id,)
         )
+
+        # Log to history
+        await cur.execute("""
+            INSERT INTO task_status_history (task_id, previous_status, new_status, changed_by, reason, metadata)
+            VALUES (%s, NULL, 'attachment_deleted', %s, %s, %s)
+        """, (task_id, str(user_id) if user_id else None, f"File deleted: {attachment['original_filename']}", '{}'))
+
         await conn.commit()
 
 

@@ -304,6 +304,7 @@ class TaskUpdate(BaseModel):
     due_date: Optional[datetime] = None
     resolution_notes: Optional[str] = None
     details: Optional[dict[str, Any]] = None  # Allow editing task details
+    changed_by: Optional[UUID] = None  # User who made the change (for history tracking)
 
 
 class TaskClaim(BaseModel):

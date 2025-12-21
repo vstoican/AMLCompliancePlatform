@@ -2,6 +2,7 @@
 AI Assistant API endpoints with MCP Postgres integration
 """
 import os
+import re
 import json
 import httpx
 from typing import Optional
@@ -238,6 +239,63 @@ async def check_mcp_health():
         raise HTTPException(status_code=503, detail=f"MCP server unavailable: {str(e)}")
 
 
+@router.get("/models/{provider}")
+async def get_available_models(provider: str, conn: AsyncConnection = Depends(connection)):
+    """Get available models for a provider"""
+    settings = await _get_all_settings(conn)
+    api_key = settings.get("api_key")
+
+    if provider == "openai":
+        if not api_key:
+            # Return default models if no API key
+            return {"models": [
+                {"id": "gpt-4o", "name": "GPT-4o"},
+                {"id": "gpt-4o-mini", "name": "GPT-4o Mini"},
+                {"id": "gpt-4-turbo", "name": "GPT-4 Turbo"},
+            ]}
+
+        try:
+            import openai
+            client = openai.OpenAI(api_key=api_key)
+            models_response = client.models.list()
+
+            # Filter for chat models only
+            chat_models = []
+            excluded_keywords = ['instruct', 'base', 'audio', 'realtime', 'transcribe', 'tts', 'search', 'diarize']
+
+            for model in models_response.data:
+                model_id = model.id
+                # Include GPT-4, GPT-3.5, and o1/o3 models
+                if any(prefix in model_id for prefix in ['gpt-4', 'gpt-3.5', 'o1', 'o3']):
+                    # Skip non-chat models
+                    if not any(excluded in model_id for excluded in excluded_keywords):
+                        chat_models.append({
+                            "id": model_id,
+                            "name": model_id,
+                            "created": model.created
+                        })
+
+            # Sort by creation date (newest first)
+            chat_models.sort(key=lambda x: x.get("created", 0), reverse=True)
+
+            return {"models": chat_models}
+
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to fetch models: {str(e)}")
+
+    elif provider == "anthropic":
+        # Anthropic doesn't have a models list API, return known models
+        return {"models": [
+            {"id": "claude-sonnet-4-20250514", "name": "Claude Sonnet 4 (Recommended)"},
+            {"id": "claude-3-5-sonnet-20241022", "name": "Claude 3.5 Sonnet"},
+            {"id": "claude-3-5-haiku-20241022", "name": "Claude 3.5 Haiku (Fast)"},
+            {"id": "claude-3-opus-20240229", "name": "Claude 3 Opus"},
+        ]}
+
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+
+
 @router.get("/mcp/resources")
 async def list_mcp_resources():
     """List available database resources from MCP"""
@@ -256,17 +314,20 @@ async def list_mcp_resources():
 SYSTEM_PROMPT = """You are an AI assistant for an AML (Anti-Money Laundering) compliance platform.
 You help compliance officers analyze their data by answering questions in natural language.
 
+CRITICAL: You MUST respond with ONLY a JSON object - no explanatory text before or after. The system will parse your JSON and execute tools automatically.
+
 You have access to a PostgreSQL database via MCP (Model Context Protocol) with these tables:
 
 1. customers - Customer records with risk information
    - id (UUID), member_id, first_name, last_name, full_name, email, phone_number
-   - birth_date, identity_number, place_of_birth, country_of_birth
-   - address fields (county, city, street, house_number)
+   - birth_date, identity_number, place_of_birth, country_of_birth, country
+   - address_county, address_city, address_street, address_house_number (note: address_ prefix!)
    - employer_name, status (PENDING, ACTIVE, INACTIVE, BLOCKED)
    - risk_score (1-10 scale, where 10 is highest risk)
    - risk_level: ONLY 3 values exist: 'low', 'medium', 'high' (NO 'critical' level exists!)
    - pep_flag, sanctions_hit (booleans) - important risk indicators
    - geography_risk, product_risk, behavior_risk (1-10 scale)
+   - document_type, document_id, document_date_of_expire
    - created_at
    IMPORTANT: For "highest risk" customers, use: risk_level = 'high' OR ORDER BY risk_score DESC
 
@@ -290,7 +351,7 @@ You have access to a PostgreSQL database via MCP (Model Context Protocol) with t
    - task_type (investigation, kyc_refresh, document_request, escalation, sar_filing)
    - priority (low, medium, high, critical), status (pending, in_progress, completed)
    - title, description, due_date
-   - assigned_to (UUID), claimed_by_id (UUID)
+   - assigned_to (UUID references users.id)
    - created_at, completed_at
 
 5. users - System users
@@ -301,12 +362,14 @@ You also have access to a calculator tool for mathematical operations.
 Supported functions: round(x, decimals), floor(x), ceil(x), abs(x), sqrt(x), pow(x, y), min(x, y), max(x, y)
 Example expressions: "15000 * 0.05", "round(66.6666, 2)", "sqrt(144)", "pow(2, 10)"
 
-When you need to query the database, respond with a JSON object:
+When you need to query the database, respond with ONLY a JSON object (no text before or after):
 {
     "tool": "query",
-    "sql_query": "SELECT ... (your SQL query)",
+    "sql_query": "SELECT ... (your SQL query - write on ONE LINE, no backslash continuations)",
     "explanation": "Brief explanation of what you're looking for"
 }
+
+IMPORTANT: Write SQL queries on a single line. Do NOT use backslash line continuations.
 
 When you need to calculate something, respond with a JSON object:
 {
@@ -322,12 +385,14 @@ When you don't need any tool:
 }
 
 Rules:
+- ALWAYS respond with a valid JSON object only - no other text
 - Only use SELECT statements for database queries
+- Write SQL on ONE LINE (no multi-line with backslashes)
 - Limit results to 50 rows unless asked for more
 - Use clear column aliases
 - Format dates nicely
 - Use the calculator for percentage calculations, totals, averages, etc.
-- Be concise but helpful
+- Be concise but helpful in your explanations
 """
 
 
@@ -358,23 +423,36 @@ def _extract_text_response(response: str) -> str:
 
 def _extract_json_from_response(response: str) -> dict | None:
     """Extract JSON object from AI response, handling various formats"""
-    import re
-
     response = response.strip()
 
     def try_parse_json(text: str) -> dict | None:
         """Try to parse JSON, handling common AI formatting issues"""
         text = text.strip()
-        # Remove backslash line continuations (common AI mistake)
-        text = re.sub(r'\\\s*\n\s*', ' ', text)
-        # Remove trailing backslashes
-        text = re.sub(r'\\\s*"', '"', text)
+
+        # First attempt: direct parse
         try:
             parsed = json.loads(text)
             if isinstance(parsed, dict):
                 return parsed
         except json.JSONDecodeError:
             pass
+
+        # Second attempt: fix backslash line continuations
+        # The AI often does: "sql_query": "\n    SELECT \n" which is invalid JSON
+        # Remove these patterns: backslash + newline, backslash + spaces + newline
+        cleaned = text
+        cleaned = re.sub(r'\\[\s\n]+', ' ', cleaned)  # backslash followed by whitespace/newlines
+        cleaned = re.sub(r'\s+', ' ', cleaned)  # collapse multiple spaces
+        cleaned = re.sub(r'"\s+', '"', cleaned)  # clean up after opening quotes
+        cleaned = re.sub(r'\s+"', '"', cleaned)  # clean up before closing quotes
+
+        try:
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
         return None
 
     # Try 1: Direct JSON parse
@@ -446,6 +524,14 @@ async def chat(request: ChatRequest, conn: AsyncConnection = Depends(connection)
         # Extract JSON from anywhere in the response
         parsed = _extract_json_from_response(ai_response)
 
+        # Fallback: If no JSON but contains SQL code block, extract and run it
+        if not parsed:
+            sql_match = re.search(r'```sql\s*\n?(.*?)\n?```', ai_response, re.DOTALL | re.IGNORECASE)
+            if sql_match:
+                sql_text = sql_match.group(1).strip()
+                if sql_text.upper().startswith('SELECT'):
+                    parsed = {"tool": "query", "sql_query": sql_text}
+
         if parsed:
             tool = parsed.get("tool", "").lower()
 
@@ -457,16 +543,55 @@ async def chat(request: ChatRequest, conn: AsyncConnection = Depends(connection)
                     query_results = await _execute_mcp_query(sql_query)
 
                     # Get AI to analyze the results
-                    analysis_prompt = f"""Query results:
+                    user_asked = request.message
+                    num_results = len(query_results) if query_results else 0
+                    wants_table = any(word in user_asked.lower() for word in ['table', 'list', 'show all', 'show me'])
+
+                    if wants_table and num_results > 1:
+                        # Generate markdown table server-side
+                        columns = list(query_results[0].keys()) if query_results else []
+                        table_lines = []
+                        table_lines.append("| " + " | ".join(columns) + " |")
+                        table_lines.append("| " + " | ".join(["---"] * len(columns)) + " |")
+                        for row in query_results:
+                            values = [str(row.get(col, "")) for col in columns]
+                            table_lines.append("| " + " | ".join(values) + " |")
+                        markdown_table = "\n".join(table_lines)
+
+                        analysis_prompt = f"""Original user question: {user_asked}
+
+I've formatted the results as a table. Add a brief 1-2 sentence summary after this table explaining the key insights:
+
+{markdown_table}
+
+Do NOT output JSON. Just provide the summary."""
+
+                        # Pre-fill the table so AI just adds summary
+                        conversation.append({"role": "assistant", "content": ai_response})
+                        conversation.append({"role": "user", "content": analysis_prompt})
+
+                        analysis_response = await _call_ai(conversation, settings)
+                        summary = _extract_text_response(analysis_response)
+
+                        # Combine table + summary
+                        final_response = f"{markdown_table}\n\n{summary}"
+                    else:
+                        analysis_prompt = f"""Original user question: {user_asked}
+
+Query results ({num_results} rows):
 {json.dumps(query_results, default=str, indent=2)}
 
-Analyze these results and provide a helpful summary for the compliance officer. Do NOT output any JSON - just provide a clear, formatted response using markdown."""
+Provide a helpful response using markdown formatting.
+- Use **bold** for key values
+- Use bullet points for lists
+- Keep it concise
+- Do NOT output JSON"""
 
-                    conversation.append({"role": "assistant", "content": ai_response})
-                    conversation.append({"role": "user", "content": analysis_prompt})
+                        conversation.append({"role": "assistant", "content": ai_response})
+                        conversation.append({"role": "user", "content": analysis_prompt})
 
-                    analysis_response = await _call_ai(conversation, settings)
-                    final_response = _extract_text_response(analysis_response)
+                        analysis_response = await _call_ai(conversation, settings)
+                        final_response = _extract_text_response(analysis_response)
 
             # Handle calculator tool
             elif tool == "calculate" and parsed.get("expression"):

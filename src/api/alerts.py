@@ -4,6 +4,7 @@ Alert Lifecycle API Router
 All status changes go through Temporal workflows for full audit/orchestration.
 """
 import logging
+from datetime import datetime
 from io import BytesIO
 from typing import Any, Optional
 from uuid import UUID, uuid4
@@ -16,6 +17,7 @@ from temporalio.client import Client
 
 from src.api.config import settings
 from src.api.db import get_pool
+from src.api.events import publish_event
 from src.api.models import (
     ALERT_STATUSES,
     RESOLUTION_TYPES,
@@ -55,12 +57,30 @@ async def create_alert(
     query = """
         INSERT INTO alerts (customer_id, type, severity, scenario, details)
         VALUES (%s, %s, %s, %s, %s)
-        RETURNING id
+        RETURNING id, created_at
     """
     async with conn.cursor() as cur:
         await cur.execute(query, (customer_id, alert_type, severity, scenario, details))
         row = await cur.fetchone()
-        return int(row[0])
+        alert_id = int(row[0])
+        created_at = row[1]
+
+        # Publish alert created event to NATS
+        await publish_event(
+            "aml.alert.created",
+            {
+                "alert_id": alert_id,
+                "customer_id": str(customer_id) if customer_id else None,
+                "type": alert_type,
+                "severity": severity,
+                "scenario": scenario,
+                "details": details,
+                "created_at": created_at.isoformat() if created_at else datetime.utcnow().isoformat(),
+            }
+        )
+        logger.info(f"Published alert.created event for alert {alert_id}")
+
+        return alert_id
 
 
 # =============================================================================

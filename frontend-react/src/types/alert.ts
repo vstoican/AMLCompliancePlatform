@@ -45,8 +45,8 @@ export interface AlertDefinition {
   category: string
   enabled: boolean
   severity: 'low' | 'medium' | 'high' | 'critical'
-  threshold_amount?: number
-  window_minutes?: number
+  threshold_amount?: number | null
+  window_minutes?: number | null
   channels?: string[]
   country_scope?: string | null
   direction?: string

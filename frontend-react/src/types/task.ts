@@ -33,3 +33,38 @@ export interface TaskFilters {
   priority?: string
   assigned_to?: string
 }
+
+export interface TaskNote {
+  id: number
+  task_id: number
+  user_id: string
+  user_name?: string
+  content: string
+  created_at: string
+}
+
+export interface TaskAttachment {
+  id: number
+  task_id: number
+  user_id: string
+  user_name?: string
+  filename: string
+  original_filename: string
+  file_path: string
+  file_size: number
+  content_type: string
+  created_at: string
+}
+
+export interface TaskStatusHistory {
+  id: number
+  task_id: number
+  previous_status: string | null
+  new_status: string
+  changed_by: string
+  changed_by_name?: string
+  reason?: string  // Maps to 'reason' column in DB
+  notes?: string   // Alias for reason (for backwards compatibility)
+  metadata?: Record<string, unknown>
+  created_at: string
+}

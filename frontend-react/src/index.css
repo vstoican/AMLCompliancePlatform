@@ -67,3 +67,48 @@
     font-family: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
   }
 }
+
+/* Date input dark mode fixes */
+@layer components {
+  /* Style the date input calendar icon in dark mode */
+  .dark input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+    cursor: pointer;
+    opacity: 0.7;
+  }
+
+  .dark input[type="date"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+  }
+
+  /* Firefox date input */
+  .dark input[type="date"] {
+    color-scheme: dark;
+  }
+
+  /* Style the datetime-local input as well */
+  .dark input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+    cursor: pointer;
+    opacity: 0.7;
+  }
+
+  .dark input[type="datetime-local"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+  }
+
+  .dark input[type="datetime-local"] {
+    color-scheme: dark;
+  }
+
+  /* Time input */
+  .dark input[type="time"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+    cursor: pointer;
+    opacity: 0.7;
+  }
+
+  .dark input[type="time"] {
+    color-scheme: dark;
+  }
+}

@@ -41,7 +41,7 @@ export function AlertDetailSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+      <SheetContent className="w-full sm:max-w-[1100px] overflow-y-auto">
         <SheetHeader className="space-y-4">
           <SheetTitle>Alert Details</SheetTitle>
         </SheetHeader>

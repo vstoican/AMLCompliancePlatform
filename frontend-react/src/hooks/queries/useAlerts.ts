@@ -193,3 +193,44 @@ export function useToggleAlertDefinition() {
     },
   })
 }
+
+export function useCreateAlertDefinition() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (payload: Omit<AlertDefinition, 'id' | 'created_at' | 'updated_at' | 'is_system_default'>) => {
+      const { data } = await api.post<AlertDefinition>('/alert-definitions', payload)
+      return data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alert-definitions'] })
+    },
+  })
+}
+
+export function useUpdateAlertDefinition() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({ id, ...payload }: Partial<AlertDefinition> & { id: number }) => {
+      const { data } = await api.patch<AlertDefinition>(`/alert-definitions/${id}`, payload)
+      return data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alert-definitions'] })
+    },
+  })
+}
+
+export function useDeleteAlertDefinition() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (id: number) => {
+      await api.delete(`/alert-definitions/${id}`)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alert-definitions'] })
+    },
+  })
+}

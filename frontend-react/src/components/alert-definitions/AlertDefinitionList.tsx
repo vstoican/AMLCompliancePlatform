@@ -1,14 +1,23 @@
-import { Shield, AlertTriangle, Info, XCircle, CheckCircle } from 'lucide-react'
+import { Shield, AlertTriangle, Info, XCircle, CheckCircle, Pencil, Trash2, MoreVertical } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import type { AlertDefinition } from '@/types/alert'
 
 interface AlertDefinitionListProps {
   definitions: AlertDefinition[]
   isLoading?: boolean
   onToggle?: (id: number, enabled: boolean) => void
+  onEdit?: (definition: AlertDefinition) => void
+  onDelete?: (definition: AlertDefinition) => void
 }
 
 const severityConfig = {
@@ -29,6 +38,8 @@ export function AlertDefinitionList({
   definitions,
   isLoading = false,
   onToggle,
+  onEdit,
+  onDelete,
 }: AlertDefinitionListProps) {
   if (isLoading) {
     return <AlertDefinitionListSkeleton />
@@ -49,6 +60,8 @@ export function AlertDefinitionList({
           key={definition.id}
           definition={definition}
           onToggle={onToggle}
+          onEdit={onEdit}
+          onDelete={onDelete}
         />
       ))}
     </div>
@@ -58,11 +71,14 @@ export function AlertDefinitionList({
 interface AlertDefinitionCardProps {
   definition: AlertDefinition
   onToggle?: (id: number, enabled: boolean) => void
+  onEdit?: (definition: AlertDefinition) => void
+  onDelete?: (definition: AlertDefinition) => void
 }
 
-function AlertDefinitionCard({ definition, onToggle }: AlertDefinitionCardProps) {
+function AlertDefinitionCard({ definition, onToggle, onEdit, onDelete }: AlertDefinitionCardProps) {
   const severity = severityConfig[definition.severity] || severityConfig.medium
   const SeverityIcon = severity.icon
+  const isSystemDefault = definition.is_system_default
 
   return (
     <Card className={!definition.enabled ? 'opacity-60' : ''}>
@@ -79,17 +95,41 @@ function AlertDefinitionCard({ definition, onToggle }: AlertDefinitionCardProps)
               </CardDescription>
             </div>
           </div>
-          <Switch
-            checked={definition.enabled}
-            onCheckedChange={(checked) => onToggle?.(definition.id, checked)}
-          />
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={definition.enabled}
+              onCheckedChange={(checked) => onToggle?.(definition.id, checked)}
+            />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8">
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => onEdit?.(definition)}>
+                  <Pencil className="h-4 w-4 mr-2" />
+                  Edit
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => onDelete?.(definition)}
+                  disabled={isSystemDefault}
+                  className={isSystemDefault ? 'opacity-50' : 'text-destructive focus:text-destructive'}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                  {isSystemDefault && <span className="ml-1 text-xs">(System)</span>}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </CardHeader>
       <CardContent>
         <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
           {definition.description || 'No description'}
         </p>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Badge variant="outline" className={severity.color}>
             <SeverityIcon className="h-3 w-3 mr-1" />
             {definition.severity.charAt(0).toUpperCase() + definition.severity.slice(1)}
@@ -97,6 +137,11 @@ function AlertDefinitionCard({ definition, onToggle }: AlertDefinitionCardProps)
           <Badge variant="outline">
             {definition.code}
           </Badge>
+          {isSystemDefault && (
+            <Badge variant="secondary" className="text-xs">
+              System
+            </Badge>
+          )}
         </div>
         <div className="mt-3 flex items-center gap-1 text-xs">
           {definition.enabled ? (

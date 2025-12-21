@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from 'react'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Radio } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -20,6 +20,7 @@ import {
   useResolveAlert,
   useHoldAlert,
 } from '@/hooks/queries'
+import { useAlertStream } from '@/hooks/useAlertStream'
 import type { Alert, AlertFilters as Filters } from '@/types/alert'
 
 export default function AlertsPage() {
@@ -34,6 +35,9 @@ export default function AlertsPage() {
   const [escalateModalOpen, setEscalateModalOpen] = useState(false)
   const [resolveModalOpen, setResolveModalOpen] = useState(false)
   const [holdModalOpen, setHoldModalOpen] = useState(false)
+
+  // Real-time alert stream - auto-refreshes when new alerts arrive
+  useAlertStream()
 
   // Queries & Mutations
   const { data, isLoading } = useAlerts(filters)
@@ -112,9 +116,15 @@ export default function AlertsPage() {
     <div className="space-y-6">
       {/* Page Header */}
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">Alert Stream</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight">Alert Stream</h1>
+          <span className="flex items-center gap-1.5 px-2 py-0.5 text-xs font-medium bg-green-500/10 text-green-600 dark:text-green-400 rounded-full">
+            <Radio className="h-3 w-3 animate-pulse" />
+            Live
+          </span>
+        </div>
         <p className="text-muted-foreground">
-          Monitor, investigate, and resolve compliance alerts
+          Monitor, investigate, and resolve compliance alerts in real-time
         </p>
       </div>
 

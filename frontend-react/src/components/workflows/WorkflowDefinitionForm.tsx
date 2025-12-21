@@ -217,7 +217,7 @@ export function WorkflowDefinitionForm({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="sm:max-w-lg overflow-hidden flex flex-col">
+      <SheetContent className="w-full sm:max-w-[1100px] overflow-hidden flex flex-col">
         <SheetHeader>
           <SheetTitle>{isEditing ? 'Edit Workflow' : 'New Workflow'}</SheetTitle>
           <SheetDescription>

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from 'react'
-import { Bot, Eye, EyeOff, Database, Info } from 'lucide-react'
+import { Bot, Eye, EyeOff, Database, Info, RefreshCw, Loader2 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
@@ -16,6 +16,7 @@ import {
   SelectLabel,
 } from '@/components/ui/select'
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import api from '@/lib/api'
 
 interface AIConfig {
   provider: 'anthropic' | 'openai'
@@ -23,23 +24,17 @@ interface AIConfig {
   api_key: string
 }
 
+interface ModelInfo {
+  id: string
+  name: string
+  created?: number
+}
+
 const defaultConfig: AIConfig = {
   provider: 'anthropic',
   model: 'claude-sonnet-4-20250514',
   api_key: '',
 }
-
-const anthropicModels = [
-  { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4 (Recommended)' },
-  { value: 'claude-3-5-sonnet-20241022', label: 'Claude 3.5 Sonnet' },
-  { value: 'claude-3-5-haiku-20241022', label: 'Claude 3.5 Haiku (Fast)' },
-]
-
-const openaiModels = [
-  { value: 'gpt-4o', label: 'GPT-4o' },
-  { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast)' },
-  { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
-]
 
 interface AISettingsProps {
   onSave?: (config: AIConfig) => void
@@ -49,7 +44,11 @@ export function AISettings({ onSave }: AISettingsProps) {
   const [config, setConfig] = useState<AIConfig>(defaultConfig)
   const [showApiKey, setShowApiKey] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
+  const [models, setModels] = useState<ModelInfo[]>([])
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [modelsError, setModelsError] = useState<string | null>(null)
 
+  // Load saved config
   useEffect(() => {
     const saved = localStorage.getItem('trustrelayAIConfig')
     if (saved) {
@@ -60,6 +59,37 @@ export function AISettings({ onSave }: AISettingsProps) {
       }
     }
   }, [])
+
+  // Fetch models when provider changes
+  useEffect(() => {
+    fetchModels(config.provider)
+  }, [config.provider])
+
+  const fetchModels = async (provider: string) => {
+    setLoadingModels(true)
+    setModelsError(null)
+    try {
+      const { data } = await api.get(`/ai/models/${provider}`)
+      setModels(data.models || [])
+    } catch (error) {
+      console.error('Failed to fetch models:', error)
+      setModelsError('Failed to load models')
+      // Set fallback models
+      if (provider === 'openai') {
+        setModels([
+          { id: 'gpt-4o', name: 'GPT-4o' },
+          { id: 'gpt-4o-mini', name: 'GPT-4o Mini' },
+        ])
+      } else {
+        setModels([
+          { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4' },
+          { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet' },
+        ])
+      }
+    } finally {
+      setLoadingModels(false)
+    }
+  }
 
   const handleProviderChange = (provider: 'anthropic' | 'openai') => {
     const defaultModel = provider === 'anthropic' ? 'claude-sonnet-4-20250514' : 'gpt-4o'
@@ -115,35 +145,48 @@ export function AISettings({ onSave }: AISettingsProps) {
 
           {/* Model Selection */}
           <div className="space-y-2">
-            <Label>Model</Label>
-            <Select value={config.model} onValueChange={handleModelChange}>
+            <div className="flex items-center justify-between">
+              <Label>Model</Label>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => fetchModels(config.provider)}
+                disabled={loadingModels}
+                className="h-6 px-2 text-xs"
+              >
+                {loadingModels ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3 w-3" />
+                )}
+                <span className="ml-1">Refresh</span>
+              </Button>
+            </div>
+            <Select value={config.model} onValueChange={handleModelChange} disabled={loadingModels}>
               <SelectTrigger>
-                <SelectValue />
+                <SelectValue placeholder={loadingModels ? "Loading models..." : "Select a model"} />
               </SelectTrigger>
               <SelectContent>
-                {config.provider === 'anthropic' ? (
-                  <SelectGroup>
-                    <SelectLabel>Anthropic Models</SelectLabel>
-                    {anthropicModels.map((model) => (
-                      <SelectItem key={model.value} value={model.value}>
-                        {model.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                ) : (
-                  <SelectGroup>
-                    <SelectLabel>OpenAI Models</SelectLabel>
-                    {openaiModels.map((model) => (
-                      <SelectItem key={model.value} value={model.value}>
-                        {model.label}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                )}
+                <SelectGroup>
+                  <SelectLabel>
+                    {config.provider === 'anthropic' ? 'Anthropic Models' : 'OpenAI Models'}
+                    {models.length > 0 && ` (${models.length})`}
+                  </SelectLabel>
+                  {models.map((model) => (
+                    <SelectItem key={model.id} value={model.id}>
+                      {model.name}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
               </SelectContent>
             </Select>
             <p className="text-xs text-muted-foreground">
-              Select the AI model to use for analysis
+              {modelsError ? (
+                <span className="text-destructive">{modelsError}</span>
+              ) : (
+                "Select the AI model to use for analysis"
+              )}
             </p>
           </div>
 
