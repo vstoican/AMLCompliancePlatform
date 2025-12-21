@@ -19,6 +19,8 @@ services:
       - S3_REGION=us-east-1
       - MCP_POSTGRES_URL=http://mcp-postgres:3100
       - JWT_SECRET_KEY=aml-dev-secret-key-change-in-production-min-32-chars
+      - SANCTIONS_API_URL=http://host.docker.internal:8081
+      - SANCTIONS_API_TIMEOUT=30
     ports:
       - "8000:8000"
     depends_on:

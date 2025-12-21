@@ -1,7 +1,9 @@
 "use client"
 
-import { Link2, Key, Download, ExternalLink } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Link2, Key, Download, ExternalLink, Shield, RefreshCw } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 
 interface IntegrationCardProps {
   icon: React.ReactNode
@@ -31,7 +33,46 @@ function IntegrationCard({ icon, title, description, onClick }: IntegrationCardP
   )
 }
 
+interface ServiceStatus {
+  connected: boolean
+  checking: boolean
+  lastChecked?: Date
+  error?: string
+}
+
 export function IntegrationsSettings() {
+  const [sanctionsApiStatus, setSanctionsApiStatus] = useState<ServiceStatus>({
+    connected: false,
+    checking: true,
+  })
+
+  const checkSanctionsApi = async () => {
+    setSanctionsApiStatus(prev => ({ ...prev, checking: true }))
+    try {
+      // Try to hit the sanctions API health or search endpoint
+      const response = await fetch('/api/sanctions/health', {
+        method: 'GET',
+        signal: AbortSignal.timeout(5000),
+      })
+      setSanctionsApiStatus({
+        connected: response.ok,
+        checking: false,
+        lastChecked: new Date(),
+      })
+    } catch {
+      setSanctionsApiStatus({
+        connected: false,
+        checking: false,
+        lastChecked: new Date(),
+        error: 'Service unavailable',
+      })
+    }
+  }
+
+  useEffect(() => {
+    checkSanctionsApi()
+  }, [])
+
   const handleWebhooks = () => {
     // TODO: Implement webhooks configuration
     alert('Webhooks configuration coming soon')
@@ -145,6 +186,42 @@ export function IntegrationsSettings() {
                 </div>
               </div>
               <span className="text-sm text-muted-foreground">Port 3100</span>
+            </div>
+
+            <div className="flex items-center justify-between p-4 rounded-lg border">
+              <div className="flex items-center gap-3">
+                <div className={`h-2 w-2 rounded-full ${
+                  sanctionsApiStatus.checking
+                    ? 'bg-yellow-500 animate-pulse'
+                    : sanctionsApiStatus.connected
+                      ? 'bg-green-500'
+                      : 'bg-red-500'
+                }`} />
+                <div className="flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-muted-foreground" />
+                  <div>
+                    <p className="font-medium">Sanctions Screening API</p>
+                    <p className="text-sm text-muted-foreground">
+                      {sanctionsApiStatus.checking
+                        ? 'Checking connection...'
+                        : sanctionsApiStatus.connected
+                          ? 'Connected - OFAC, EU, UN sanctions lists'
+                          : 'Disconnected - Service unavailable'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={checkSanctionsApi}
+                  disabled={sanctionsApiStatus.checking}
+                >
+                  <RefreshCw className={`h-4 w-4 ${sanctionsApiStatus.checking ? 'animate-spin' : ''}`} />
+                </Button>
+                <span className="text-sm text-muted-foreground">Port 8081</span>
+              </div>
             </div>
           </div>
         </CardContent>

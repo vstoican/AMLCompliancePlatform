@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Plus, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
@@ -22,6 +23,8 @@ import { useCustomers, useCreateCustomer, useUpdateCustomer, useDeleteCustomer }
 import type { Customer, CustomerFilters as Filters } from '@/types/customer'
 
 export default function CustomersPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+
   // State
   const [filters, setFilters] = useState<Filters>({})
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null)
@@ -30,6 +33,26 @@ export default function CustomersPage() {
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null)
+
+  // Handle customerId from URL query params
+  useEffect(() => {
+    const customerIdParam = searchParams.get('customerId')
+    if (customerIdParam) {
+      setSelectedCustomerId(customerIdParam)
+      setDetailPanelOpen(true)
+    }
+  }, [searchParams])
+
+  // Update URL when panel closes
+  const handleDetailPanelChange = (open: boolean) => {
+    setDetailPanelOpen(open)
+    if (!open) {
+      // Remove customerId from URL when closing panel
+      const newParams = new URLSearchParams(searchParams)
+      newParams.delete('customerId')
+      setSearchParams(newParams, { replace: true })
+    }
+  }
 
   // Queries
   const { data, isLoading } = useCustomers(filters)
@@ -41,6 +64,10 @@ export default function CustomersPage() {
   const handleRowClick = (customer: Customer) => {
     setSelectedCustomerId(customer.id)
     setDetailPanelOpen(true)
+    // Update URL with customerId
+    const newParams = new URLSearchParams(searchParams)
+    newParams.set('customerId', customer.id)
+    setSearchParams(newParams, { replace: true })
   }
 
   const handleAddNew = () => {
@@ -165,7 +192,7 @@ export default function CustomersPage() {
       <CustomerDetailPanel
         customerId={selectedCustomerId}
         open={detailPanelOpen}
-        onOpenChange={setDetailPanelOpen}
+        onOpenChange={handleDetailPanelChange}
         onEdit={handleEdit}
       />
 

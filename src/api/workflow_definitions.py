@@ -448,10 +448,10 @@ async def run_workflow(definition_id: int, request: WorkflowRunRequest):
                         parameters.get("days_before_expiry", 365),
                     ]
                 elif workflow_type == "sanctions_screening":
-                    # SanctionsScreeningWorkflow.run(customer_id: str, hit_detected: bool)
+                    # SanctionsScreeningWorkflow.run(customer_id: str, batch_size: int)
                     workflow_args = [
                         parameters.get("customer_id", ""),
-                        parameters.get("hit_detected", False),
+                        parameters.get("batch_size", 100),
                     ]
                 elif workflow_type in ("document_request", "sar_filing"):
                     # These workflows expect (customer_id, task_id, details)

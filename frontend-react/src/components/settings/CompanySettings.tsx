@@ -1,8 +1,11 @@
 "use client"
 
+import { useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
+import { toast } from 'sonner'
+import { Loader2 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Form,
@@ -15,6 +18,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
+import { Skeleton } from '@/components/ui/skeleton'
+import { useCompanySettings, useUpdateCompanySettings } from '@/hooks/queries'
 
 const companySchema = z.object({
   // Company Details
@@ -36,15 +41,14 @@ const companySchema = z.object({
 
 type CompanyFormData = z.infer<typeof companySchema>
 
-interface CompanySettingsProps {
-  onSave?: (data: CompanyFormData) => void
-}
+export function CompanySettings() {
+  const { data: settings, isLoading } = useCompanySettings()
+  const updateSettings = useUpdateCompanySettings()
 
-export function CompanySettings({ onSave }: CompanySettingsProps) {
   const form = useForm<CompanyFormData>({
     resolver: zodResolver(companySchema),
     defaultValues: {
-      company_name: 'AML Compliance Platform',
+      company_name: '',
       registration_number: '',
       address_line1: '',
       city: '',
@@ -59,8 +63,49 @@ export function CompanySettings({ onSave }: CompanySettingsProps) {
     },
   })
 
-  const handleSubmit = (data: CompanyFormData) => {
-    onSave?.(data)
+  // Load settings into form when data arrives
+  useEffect(() => {
+    if (settings) {
+      form.reset({
+        company_name: settings.company_name || '',
+        registration_number: settings.registration_number || '',
+        address_line1: settings.address_line1 || '',
+        city: settings.city || '',
+        postal_code: settings.postal_code || '',
+        country: settings.country || '',
+        contact_email: settings.contact_email || '',
+        contact_phone: settings.contact_phone || '',
+        website: settings.website || '',
+        compliance_officer_name: settings.compliance_officer_name || '',
+        compliance_officer_email: settings.compliance_officer_email || '',
+        compliance_officer_phone: settings.compliance_officer_phone || '',
+      })
+    }
+  }, [settings, form])
+
+  const handleSubmit = async (data: CompanyFormData) => {
+    try {
+      await updateSettings.mutateAsync(data)
+      toast.success('Company settings saved successfully')
+    } catch (error) {
+      toast.error('Failed to save company settings')
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Company Information</CardTitle>
+          <CardDescription>Loading...</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </CardContent>
+      </Card>
+    )
   }
 
   return (
@@ -264,7 +309,10 @@ export function CompanySettings({ onSave }: CompanySettingsProps) {
               </div>
             </div>
 
-            <Button type="submit">Save Company Information</Button>
+            <Button type="submit" disabled={updateSettings.isPending}>
+              {updateSettings.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save Company Information
+            </Button>
           </form>
         </Form>
       </CardContent>

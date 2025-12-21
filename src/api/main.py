@@ -42,6 +42,8 @@ from .users import router as users_router
 from .alerts import router as alerts_router
 from .ai_assistant import router as ai_router
 from .workflow_definitions import router as workflow_definitions_router
+from .company_settings import router as company_settings_router
+from .roles import router as roles_router
 
 app = FastAPI(title="AML Compliance MVP", version="0.1.0", redoc_url=None)
 
@@ -74,6 +76,12 @@ app.include_router(ai_router)
 
 # Register workflow definitions router
 app.include_router(workflow_definitions_router)
+
+# Register company settings router
+app.include_router(company_settings_router)
+
+# Register roles router
+app.include_router(roles_router)
 
 # Global Temporal client
 temporal_client: Optional[TemporalClient] = None
@@ -189,6 +197,45 @@ async def shutdown_event() -> None:
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "timestamp": datetime.utcnow()}
+
+
+@app.get("/sanctions/health")
+async def sanctions_health() -> dict:
+    """Check if the sanctions screening API is available"""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            # Hit the sanctions API health endpoint
+            response = await client.get(f"{settings.sanctions_api_url}/health")
+            if response.status_code == 200:
+                return {
+                    "status": "connected",
+                    "api_url": settings.sanctions_api_url,
+                    "timestamp": datetime.utcnow()
+                }
+            else:
+                return {
+                    "status": "error",
+                    "error": f"API returned status {response.status_code}",
+                    "api_url": settings.sanctions_api_url,
+                    "timestamp": datetime.utcnow()
+                }
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status_code=503,
+            detail="Sanctions API timeout - service may be unavailable"
+        )
+    except httpx.ConnectError:
+        raise HTTPException(
+            status_code=503,
+            detail="Sanctions API connection failed - service unavailable"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Sanctions API error: {str(e)}"
+        )
 
 
 @app.get("/dashboard/stats")

@@ -35,7 +35,7 @@ export default function SettingsPage() {
         </TabsList>
 
         <TabsContent value="company">
-          <CompanySettings onSave={() => handleSave('Company')} />
+          <CompanySettings />
         </TabsContent>
 
         <TabsContent value="risk-matrix">

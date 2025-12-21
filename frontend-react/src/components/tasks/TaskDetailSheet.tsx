@@ -55,6 +55,8 @@ import {
 import { formatDateTime, formatDate, formatDistanceToNow } from '@/lib/utils'
 import type { Task } from '@/types/task'
 import api from '@/lib/api'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 interface TaskDetailSheetProps {
   taskId: number | null
@@ -248,9 +250,6 @@ export function TaskDetailSheet({
                     {linkCopied ? 'Copied!' : 'Copy Link'}
                   </Button>
                 </div>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {task.description || 'No description provided'}
-                </p>
                 <div className="mt-2 flex items-center gap-2">
                   <StatusBadge status={task.status} />
                   <SeverityBadge severity={task.priority} />
@@ -381,6 +380,23 @@ export function TaskDetailSheet({
                 </div>
               </div>
             </div>
+
+            {/* Description */}
+            {task.description && (
+              <>
+                <Separator />
+                <div>
+                  <h4 className="text-sm font-semibold mb-3">Description</h4>
+                  <div className="p-4 rounded-lg border bg-muted/30">
+                    <div className="prose prose-sm dark:prose-invert max-w-none prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-strong:text-foreground">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {task.description}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Related Alert */}
             {task.alert_id && (

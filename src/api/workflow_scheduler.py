@@ -82,13 +82,11 @@ async def create_or_update_schedule(
 
     schedule_id = get_schedule_id(definition_code)
 
-    # Import workflow classes
+    # Import workflow classes (only import workflows that exist)
     from src.workflows.worker import (
         KycRefreshWorkflow,
         SanctionsScreeningWorkflow,
-        InvestigationWorkflow,
         DocumentRequestWorkflow,
-        EscalationWorkflow,
         SarFilingWorkflow,
         BUSINESS_TASK_QUEUE,
     )
@@ -96,9 +94,7 @@ async def create_or_update_schedule(
     workflow_map = {
         "kyc_refresh": KycRefreshWorkflow,
         "sanctions_screening": SanctionsScreeningWorkflow,
-        "investigation": InvestigationWorkflow,
         "document_request": DocumentRequestWorkflow,
-        "escalation": EscalationWorkflow,
         "sar_filing": SarFilingWorkflow,
     }
 
@@ -126,12 +122,13 @@ async def create_or_update_schedule(
                 parameters.get("days_before_expiry", 365),
             ]
         elif workflow_type == "sanctions_screening":
-            # SanctionsScreeningWorkflow.run(customer_id: str, hit_detected: bool)
+            # SanctionsScreeningWorkflow.run(customer_id: str, batch_size: int)
+            # Empty customer_id = batch mode (process all customers)
             workflow_args = [
                 parameters.get("customer_id", ""),
-                parameters.get("hit_detected", False),
+                parameters.get("batch_size", 100),
             ]
-        elif workflow_type in ("investigation", "document_request", "escalation", "sar_filing"):
+        elif workflow_type in ("document_request", "sar_filing"):
             # These workflows expect (customer_id, task_id, details)
             # For scheduled runs without a specific task, pass 0 as task_id
             workflow_args = [

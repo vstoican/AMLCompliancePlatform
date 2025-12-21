@@ -7,6 +7,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from temporalio import activity, workflow
 from temporalio.client import Client
+from temporalio.common import RetryPolicy
 from temporalio.worker import Worker
 
 from src.api.config import settings
@@ -1255,16 +1256,21 @@ async def check_sanctions_api_activity(customer_name: str) -> dict[str, Any]:
             data = response.json()
 
             # Handle different API response formats
-            # Expecting either: {"results": [...]} or {"matches": [...]} or a list directly
+            # Expecting either: {"success": true, "data": [...]} or {"results": [...]} or a list directly
             matches = []
             if isinstance(data, list):
                 matches = data
             elif isinstance(data, dict):
-                matches = data.get("results", data.get("matches", data.get("data", [])))
+                # Try different common response formats
+                matches = data.get("data") or data.get("results") or data.get("matches") or []
+
+            # Ensure matches is always a list (handle None case)
+            if matches is None:
+                matches = []
 
             return {
                 "hit": len(matches) > 0,
-                "matches": matches[:10],  # Limit to 10 matches for storage
+                "matches": matches[:10] if matches else [],  # Limit to 10 matches for storage
                 "error": None
             }
 
@@ -1300,7 +1306,7 @@ async def get_customers_for_screening_activity(batch_size: int = 100, offset: in
             """
             SELECT id, full_name, first_name, last_name, sanctions_hit
             FROM customers
-            WHERE status = 'active'
+            WHERE status = 'ACTIVE'
             ORDER BY id
             LIMIT %s OFFSET %s
             """,
@@ -1328,7 +1334,7 @@ async def update_customer_sanctions_status_activity(
     match_details: dict[str, Any]
 ) -> None:
     """
-    Update a customer's sanctions_hit flag and create an alert if needed.
+    Update a customer's sanctions_hit flag and create an alert and task if needed.
 
     Args:
         customer_id: The customer UUID
@@ -1337,29 +1343,138 @@ async def update_customer_sanctions_status_activity(
     """
     pool = get_pool()
     async with pool.connection() as conn:
-        async with conn.cursor() as cur:
+        async with conn.cursor(row_factory=dict_row) as cur:
             # Update customer sanctions_hit flag
             await cur.execute(
                 """
                 UPDATE customers
-                SET sanctions_hit = %s, updated_at = NOW()
+                SET sanctions_hit = %s
                 WHERE id = %s
                 """,
                 (sanctions_hit, customer_id)
             )
 
             if sanctions_hit:
+                # Get customer name for alert/task description
+                await cur.execute(
+                    "SELECT full_name, first_name, last_name FROM customers WHERE id = %s",
+                    (customer_id,)
+                )
+                customer = await cur.fetchone()
+                customer_name = customer["full_name"] if customer else "Unknown"
+                if not customer_name and customer:
+                    customer_name = f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip()
+
+                # Extract rich information from matches
+                matches = match_details.get("matches", [])
+                match_count = len(matches)
+
+                # Build enriched details
+                enriched_details = {
+                    "source": match_details.get("source", "sanctions_screening"),
+                    "checked_name": match_details.get("checked_name"),
+                    "screened_at": match_details.get("screened_at"),
+                    "match_count": match_count,
+                    "matches": []
+                }
+
+                # Extract key information from each match
+                for match in matches[:5]:  # Limit to 5 matches for storage
+                    match_info = {
+                        "full_name": match.get("full_name"),
+                        "entry_type": match.get("entry_type"),
+                        "list_type": match.get("list_type"),
+                        "listed_on": match.get("listed_on"),
+                        "nationality": match.get("nationality"),
+                        "designation": match.get("designation"),
+                        "reference_number": match.get("reference_number"),
+                        "data_source": match.get("data_source_id"),
+                        "comments": match.get("comments") if match.get("comments") else None,
+                        "aliases": [a.get("alias_name") for a in (match.get("aliases") or [])[:5]],
+                    }
+                    enriched_details["matches"].append(match_info)
+
+                # Build summary for description
+                list_types = list(set(m.get("list_type") for m in matches if m.get("list_type")))
+                summary_parts = [
+                    f"Customer '{customer_name}' matched against {match_count} sanctions list entries.",
+                    f"Lists: {', '.join(list_types[:3])}." if list_types else "",
+                ]
+                if matches and matches[0].get("comments"):
+                    summary_parts.append(f"Details: {matches[0]['comments'][:200]}...")
+
+                alert_summary = " ".join(filter(None, summary_parts))
+
                 # Create an alert for the sanctions match
                 await cur.execute(
                     """
-                    INSERT INTO alerts (customer_id, type, severity, scenario, details, status)
-                    VALUES (%s, 'sanctions', 'critical', 'sanctions_match', %s, 'open')
+                    INSERT INTO alerts (customer_id, type, severity, scenario, details, status, priority)
+                    VALUES (%s, 'sanctions', 'critical', 'sanctions_match', %s, 'open', 'critical')
                     RETURNING id
                     """,
-                    (customer_id, Jsonb(match_details))
+                    (customer_id, Jsonb(enriched_details))
                 )
-                alert_id = (await cur.fetchone())[0]
+                alert_row = await cur.fetchone()
+                alert_id = alert_row["id"]
                 logger.info(f"Created sanctions alert {alert_id} for customer {customer_id}")
+
+                # Create a task for investigation
+                task_title = f"Sanctions Match Investigation: {customer_name}"
+                task_description = f"""## Sanctions Screening Alert
+
+| Field | Value |
+|-------|-------|
+| **Customer** | [{customer_name}](/customers?customerId={customer_id}) |
+| **Screened At** | {match_details.get('screened_at', 'N/A')} |
+
+### Match Summary
+**{match_count}** potential match(es) found against sanctions lists.
+
+### Matched Lists
+{chr(10).join(f'- {lt}' for lt in list_types) if list_types else '- N/A'}
+
+### Action Required
+1. Review the matched sanctions entries in the alert details
+2. Verify customer identity against the matched entries
+3. Determine if this is a true positive or false positive
+4. If true positive, escalate to compliance officer
+5. Document findings and resolution
+
+### First Match Details
+"""
+                if matches:
+                    first_match = matches[0]
+                    task_description += f"""
+| Field | Value |
+|-------|-------|
+| **Name on List** | {first_match.get('full_name', 'N/A')} |
+| **List Type** | {first_match.get('list_type', 'N/A')} |
+| **Listed On** | {first_match.get('listed_on', 'N/A')} |
+| **Nationality** | {first_match.get('nationality', 'N/A')} |
+| **Designation** | {first_match.get('designation', 'N/A') or 'N/A'} |
+| **Reference** | {first_match.get('reference_number', 'N/A') or 'N/A'} |
+"""
+                    if first_match.get('comments'):
+                        task_description += f"\n### Comments\n{first_match['comments']}"
+
+                await cur.execute(
+                    """
+                    INSERT INTO tasks (
+                        customer_id, alert_id, task_type, priority, status,
+                        title, description, details, due_date
+                    ) VALUES (
+                        %s, %s, 'sanctions_screening', 'critical', 'pending',
+                        %s, %s, %s, NOW() + INTERVAL '24 hours'
+                    )
+                    RETURNING id
+                    """,
+                    (customer_id, alert_id, task_title, task_description, Jsonb(enriched_details))
+                )
+                task_row = await cur.fetchone()
+                task_id = task_row["id"]
+                logger.info(f"Created sanctions investigation task {task_id} for alert {alert_id}")
+
+        await conn.commit()
 
 
 @activity.defn
@@ -1455,7 +1570,7 @@ class SanctionsScreeningWorkflow:
         Returns:
             dict with screening results summary
         """
-        start_time = datetime.now()
+        start_time = workflow.now()
         total_checked = 0
         hits_found = 0
         errors = 0
@@ -1532,7 +1647,7 @@ class SanctionsScreeningWorkflow:
                 check_sanctions_api_activity,
                 args=[name_to_check],
                 start_to_close_timeout=timedelta(seconds=60),
-                retry_policy=workflow.RetryPolicy(
+                retry_policy=RetryPolicy(
                     maximum_attempts=3,
                     initial_interval=timedelta(seconds=1),
                     maximum_interval=timedelta(seconds=10),
@@ -1562,14 +1677,14 @@ class SanctionsScreeningWorkflow:
                             "source": "sanctions_screening_workflow",
                             "checked_name": name_to_check,
                             "matches": result.get("matches", []),
-                            "screened_at": datetime.now().isoformat()
+                            "screened_at": workflow.now().isoformat()
                         }
                     ],
                     start_to_close_timeout=timedelta(seconds=30),
                 )
 
         # Calculate duration
-        duration_seconds = (datetime.now() - start_time).total_seconds()
+        duration_seconds = (workflow.now() - start_time).total_seconds()
 
         # Record the screening run (only in batch mode)
         if not customer_id or customer_id == "all":
