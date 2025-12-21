@@ -1274,6 +1274,9 @@ async def check_sanctions_api_activity(customer_name: str) -> dict[str, Any]:
     except httpx.HTTPStatusError as e:
         logger.error(f"Sanctions API error for customer {customer_name}: {e.response.status_code}")
         return {"hit": False, "matches": [], "error": f"API error: {e.response.status_code}"}
+    except httpx.ConnectError:
+        logger.error(f"Sanctions API connection error for customer {customer_name}")
+        return {"hit": False, "matches": [], "error": "API connection error"}
     except Exception as e:
         logger.error(f"Sanctions API exception for customer {customer_name}: {str(e)}")
         return {"hit": False, "matches": [], "error": str(e)}
