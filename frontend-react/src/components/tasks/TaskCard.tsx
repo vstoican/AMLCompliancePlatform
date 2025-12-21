@@ -35,7 +35,10 @@ export function TaskCard({
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-2">
           <div className="space-y-1 flex-1">
-            <h4 className="font-semibold leading-tight">{task.title}</h4>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground font-mono">#{task.id}</span>
+              <h4 className="font-semibold leading-tight">{task.title}</h4>
+            </div>
             <p className="text-sm text-muted-foreground line-clamp-2">
               {task.description || 'No description'}
             </p>

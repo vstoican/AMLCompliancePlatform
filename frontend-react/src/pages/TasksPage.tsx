@@ -1,11 +1,12 @@
 "use client"
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ClipboardList, Plus, RefreshCw, LayoutGrid, List } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { TaskFilters, TaskList, TaskDetailSheet, TaskKanbanBoard } from '@/components/tasks'
+import { TaskFilters, TaskList, TaskDetailSheet, TaskKanbanBoard, CreateTaskModal } from '@/components/tasks'
 import { PageHeader } from '@/components/shared'
 import { useTasks, useClaimTask, useReleaseTask, useCompleteTask } from '@/hooks/queries'
 import { useAuthStore } from '@/stores/authStore'
@@ -15,12 +16,29 @@ type ViewMode = 'list' | 'board'
 
 export default function TasksPage() {
   const user = useAuthStore((state) => state.user)
+  const [searchParams, setSearchParams] = useSearchParams()
   const [filters, setFilters] = useState<Filters>({})
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
+  const [createModalOpen, setCreateModalOpen] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>('board')
 
   const { data, isLoading, refetch } = useTasks(filters)
+
+  // Open task detail panel if taskId is in URL
+  useEffect(() => {
+    const taskIdParam = searchParams.get('taskId')
+    if (taskIdParam) {
+      const taskId = parseInt(taskIdParam, 10)
+      if (!isNaN(taskId)) {
+        setSelectedTaskId(taskId)
+        setDetailOpen(true)
+        // Clear the URL param after opening
+        setSearchParams({}, { replace: true })
+      }
+    }
+  }, [searchParams, setSearchParams])
+
   const claimTask = useClaimTask()
   const releaseTask = useReleaseTask()
   const completeTask = useCompleteTask()
@@ -92,7 +110,7 @@ export default function TasksPage() {
           <RefreshCw className="h-4 w-4 mr-2" />
           Refresh
         </Button>
-        <Button size="sm">
+        <Button size="sm" onClick={() => setCreateModalOpen(true)}>
           <Plus className="h-4 w-4 mr-2" />
           New Task
         </Button>
@@ -126,6 +144,11 @@ export default function TasksPage() {
         onRelease={handleRelease}
         onComplete={handleComplete}
         currentUserId={user?.id}
+      />
+
+      <CreateTaskModal
+        open={createModalOpen}
+        onOpenChange={setCreateModalOpen}
       />
     </div>
   )

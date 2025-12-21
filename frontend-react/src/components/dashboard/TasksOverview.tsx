@@ -74,6 +74,7 @@ function TaskItem({ task, onClick, showDueDate }: TaskItemProps) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="font-medium text-sm truncate">
+            <span className="text-muted-foreground font-mono text-xs mr-1.5">#{task.id}</span>
             {task.title}
           </div>
           <div className="text-xs text-muted-foreground truncate">
@@ -177,7 +178,7 @@ export function TasksOverview() {
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="unassigned" className="mt-0">
+            <TabsContent value="unassigned" className="mt-0 min-h-[280px]">
               {unassignedTasks.length === 0 ? (
                 <EmptyState
                   icon={UserX}
@@ -186,12 +187,12 @@ export function TasksOverview() {
                   className="py-8"
                 />
               ) : (
-                <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                <div className="space-y-2 max-h-[280px] overflow-y-auto">
                   {unassignedTasks.slice(0, 10).map((task) => (
                     <TaskItem
                       key={task.id}
                       task={task}
-                      onClick={() => navigate('/tasks')}
+                      onClick={() => navigate(`/tasks?taskId=${task.id}`)}
                     />
                   ))}
                   {unassignedTasks.length > 10 && (
@@ -203,7 +204,7 @@ export function TasksOverview() {
               )}
             </TabsContent>
 
-            <TabsContent value="deadline" className="mt-0">
+            <TabsContent value="deadline" className="mt-0 min-h-[280px]">
               {approachingDeadlineTasks.length === 0 ? (
                 <EmptyState
                   icon={Clock}
@@ -212,12 +213,12 @@ export function TasksOverview() {
                   className="py-8"
                 />
               ) : (
-                <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                <div className="space-y-2 max-h-[280px] overflow-y-auto">
                   {approachingDeadlineTasks.slice(0, 10).map((task) => (
                     <TaskItem
                       key={task.id}
                       task={task}
-                      onClick={() => navigate('/tasks')}
+                      onClick={() => navigate(`/tasks?taskId=${task.id}`)}
                       showDueDate
                     />
                   ))}

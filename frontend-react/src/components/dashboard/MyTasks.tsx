@@ -80,7 +80,7 @@ export function MyTasks() {
                 <div
                   key={task.id}
                   className="flex items-center justify-between p-3 rounded-lg border bg-muted/30 hover:bg-muted/50 cursor-pointer transition-colors"
-                  onClick={() => navigate('/tasks')}
+                  onClick={() => navigate(`/tasks?taskId=${task.id}`)}
                 >
                   <div className="flex items-center gap-3 min-w-0 flex-1">
                     <div className={cn(
@@ -91,6 +91,7 @@ export function MyTasks() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="font-medium text-sm truncate">
+                        <span className="text-muted-foreground font-mono text-xs mr-1.5">#{task.id}</span>
                         {task.title}
                       </div>
                       <div className="text-xs text-muted-foreground truncate">

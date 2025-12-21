@@ -38,5 +38,9 @@ class Settings(BaseModel):
     max_failed_attempts: int = 5
     lockout_minutes: int = 15
 
+    # External Services - Sanctions Screening
+    sanctions_api_url: str = os.getenv("SANCTIONS_API_URL", "http://localhost:8081")
+    sanctions_api_timeout: int = int(os.getenv("SANCTIONS_API_TIMEOUT", "30"))
+
 
 settings = Settings()

@@ -1224,6 +1224,190 @@ async def create_task_from_alert_activity(
 
 
 # =============================================================================
+# SANCTIONS SCREENING ACTIVITIES
+# =============================================================================
+
+@activity.defn
+async def check_sanctions_api_activity(customer_name: str) -> dict[str, Any]:
+    """
+    Call the external sanctions API to check if a customer name matches any sanctions list.
+
+    Args:
+        customer_name: The customer name to check
+
+    Returns:
+        dict with keys:
+        - hit: bool - whether a match was found
+        - matches: list - list of matching entries (if any)
+        - error: str - error message if the API call failed
+    """
+    import httpx  # Import inside activity to avoid Temporal sandbox restrictions
+
+    if not customer_name or not customer_name.strip():
+        return {"hit": False, "matches": [], "error": None}
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.sanctions_api_timeout) as client:
+            url = f"{settings.sanctions_api_url}/api/v1/sanctions/search"
+            response = await client.get(url, params={"q": customer_name.strip()})
+            response.raise_for_status()
+
+            data = response.json()
+
+            # Handle different API response formats
+            # Expecting either: {"results": [...]} or {"matches": [...]} or a list directly
+            matches = []
+            if isinstance(data, list):
+                matches = data
+            elif isinstance(data, dict):
+                matches = data.get("results", data.get("matches", data.get("data", [])))
+
+            return {
+                "hit": len(matches) > 0,
+                "matches": matches[:10],  # Limit to 10 matches for storage
+                "error": None
+            }
+
+    except httpx.TimeoutException:
+        logger.warning(f"Sanctions API timeout for customer: {customer_name}")
+        return {"hit": False, "matches": [], "error": "API timeout"}
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Sanctions API error for customer {customer_name}: {e.response.status_code}")
+        return {"hit": False, "matches": [], "error": f"API error: {e.response.status_code}"}
+    except Exception as e:
+        logger.error(f"Sanctions API exception for customer {customer_name}: {str(e)}")
+        return {"hit": False, "matches": [], "error": str(e)}
+
+
+@activity.defn
+async def get_customers_for_screening_activity(batch_size: int = 100, offset: int = 0) -> list[dict[str, Any]]:
+    """
+    Fetch a batch of active customers for sanctions screening.
+
+    Args:
+        batch_size: Number of customers to fetch
+        offset: Offset for pagination
+
+    Returns:
+        List of customer dicts with id, full_name, first_name, last_name
+    """
+    pool = get_pool()
+    async with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        await cur.execute(
+            """
+            SELECT id, full_name, first_name, last_name, sanctions_hit
+            FROM customers
+            WHERE status = 'active'
+            ORDER BY id
+            LIMIT %s OFFSET %s
+            """,
+            (batch_size, offset)
+        )
+        rows = await cur.fetchall()
+
+        # Convert UUIDs to strings
+        return [
+            {
+                "id": str(row["id"]),
+                "full_name": row.get("full_name"),
+                "first_name": row.get("first_name"),
+                "last_name": row.get("last_name"),
+                "sanctions_hit": row.get("sanctions_hit", False)
+            }
+            for row in rows
+        ]
+
+
+@activity.defn
+async def update_customer_sanctions_status_activity(
+    customer_id: str,
+    sanctions_hit: bool,
+    match_details: dict[str, Any]
+) -> None:
+    """
+    Update a customer's sanctions_hit flag and create an alert if needed.
+
+    Args:
+        customer_id: The customer UUID
+        sanctions_hit: Whether a sanctions hit was detected
+        match_details: Details of the match (for the alert)
+    """
+    pool = get_pool()
+    async with pool.connection() as conn:
+        async with conn.cursor() as cur:
+            # Update customer sanctions_hit flag
+            await cur.execute(
+                """
+                UPDATE customers
+                SET sanctions_hit = %s, updated_at = NOW()
+                WHERE id = %s
+                """,
+                (sanctions_hit, customer_id)
+            )
+
+            if sanctions_hit:
+                # Create an alert for the sanctions match
+                await cur.execute(
+                    """
+                    INSERT INTO alerts (customer_id, type, severity, scenario, details, status)
+                    VALUES (%s, 'sanctions', 'critical', 'sanctions_match', %s, 'open')
+                    RETURNING id
+                    """,
+                    (customer_id, Jsonb(match_details))
+                )
+                alert_id = (await cur.fetchone())[0]
+                logger.info(f"Created sanctions alert {alert_id} for customer {customer_id}")
+
+
+@activity.defn
+async def record_screening_run_activity(
+    total_customers: int,
+    hits_found: int,
+    errors: int,
+    duration_seconds: float
+) -> None:
+    """
+    Record a sanctions screening run in the database for audit purposes.
+    """
+    pool = get_pool()
+    async with pool.connection() as conn, conn.cursor() as cur:
+        await cur.execute(
+            """
+            INSERT INTO workflow_executions (
+                workflow_definition_id,
+                temporal_workflow_id,
+                status,
+                started_at,
+                completed_at,
+                result,
+                triggered_by
+            )
+            SELECT
+                wd.id,
+                %s,
+                'completed',
+                NOW() - interval '%s seconds',
+                NOW(),
+                %s,
+                'schedule'
+            FROM workflow_definitions wd
+            WHERE wd.workflow_type = 'sanctions_screening'
+            LIMIT 1
+            """,
+            (
+                f"sanctions-screening-{datetime.now().isoformat()}",
+                int(duration_seconds),
+                Jsonb({
+                    "total_customers": total_customers,
+                    "hits_found": hits_found,
+                    "errors": errors,
+                    "duration_seconds": duration_seconds
+                })
+            )
+        )
+
+
+# =============================================================================
 # EXISTING WORKFLOWS
 # =============================================================================
 
@@ -1242,16 +1426,166 @@ class KycRefreshWorkflow:
 
 @workflow.defn
 class SanctionsScreeningWorkflow:
-    """Workflow for sanctions screening"""
+    """
+    Workflow for sanctions screening.
+
+    Can run in two modes:
+    1. Single customer mode: Check a specific customer (customer_id provided)
+    2. Batch mode: Check all active customers (customer_id empty or "all")
+
+    The workflow calls an external sanctions API and creates alerts for any matches.
+    """
 
     @workflow.run
-    async def run(self, customer_id: str, hit_detected: bool = False) -> None:
-        if hit_detected:
-            await workflow.execute_activity(
-                create_alert_activity,
-                args=[customer_id, "sanctions_match", "high", {"source": "workflow"}],
-                start_to_close_timeout=timedelta(seconds=20),
+    async def run(
+        self,
+        customer_id: str = "",
+        batch_size: int = 100
+    ) -> dict[str, Any]:
+        """
+        Run sanctions screening.
+
+        Args:
+            customer_id: Specific customer to check, or empty/"all" for batch mode
+            batch_size: Number of customers to process per batch (batch mode only)
+
+        Returns:
+            dict with screening results summary
+        """
+        start_time = datetime.now()
+        total_checked = 0
+        hits_found = 0
+        errors = 0
+
+        if customer_id and customer_id != "all":
+            # Single customer mode
+            customers = [{"id": customer_id, "full_name": None, "first_name": None, "last_name": None}]
+
+            # We need to fetch the customer name
+            customers = await workflow.execute_activity(
+                get_customers_for_screening_activity,
+                args=[1, 0],  # Just to get the pattern, we'll filter
+                start_to_close_timeout=timedelta(seconds=30),
             )
+            # Filter to just our customer - actually let's just check by ID
+            # For single customer, fetch their info first
+            pool_customers = await workflow.execute_activity(
+                get_customers_for_screening_activity,
+                args=[1000, 0],
+                start_to_close_timeout=timedelta(seconds=60),
+            )
+            customers = [c for c in pool_customers if c["id"] == customer_id]
+
+            if not customers:
+                return {
+                    "status": "error",
+                    "message": f"Customer {customer_id} not found",
+                    "total_checked": 0,
+                    "hits_found": 0,
+                    "errors": 0
+                }
+        else:
+            # Batch mode - process all customers
+            offset = 0
+            customers = []
+
+            while True:
+                batch = await workflow.execute_activity(
+                    get_customers_for_screening_activity,
+                    args=[batch_size, offset],
+                    start_to_close_timeout=timedelta(seconds=60),
+                )
+
+                if not batch:
+                    break
+
+                customers.extend(batch)
+                offset += batch_size
+
+                # Safety limit to prevent infinite loops
+                if offset > 100000:
+                    workflow.logger.warning("Reached safety limit of 100,000 customers")
+                    break
+
+        # Process each customer
+        for customer in customers:
+            customer_id_str = customer["id"]
+
+            # Build the name to check
+            name_to_check = customer.get("full_name")
+            if not name_to_check:
+                first = customer.get("first_name", "")
+                last = customer.get("last_name", "")
+                name_to_check = f"{first} {last}".strip()
+
+            if not name_to_check:
+                workflow.logger.info(f"Skipping customer {customer_id_str} - no name available")
+                continue
+
+            total_checked += 1
+
+            # Check against sanctions API
+            result = await workflow.execute_activity(
+                check_sanctions_api_activity,
+                args=[name_to_check],
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=workflow.RetryPolicy(
+                    maximum_attempts=3,
+                    initial_interval=timedelta(seconds=1),
+                    maximum_interval=timedelta(seconds=10),
+                ),
+            )
+
+            if result.get("error"):
+                errors += 1
+                workflow.logger.warning(
+                    f"Error checking customer {customer_id_str}: {result['error']}"
+                )
+                continue
+
+            if result.get("hit"):
+                hits_found += 1
+                workflow.logger.info(
+                    f"Sanctions hit found for customer {customer_id_str} ({name_to_check})"
+                )
+
+                # Update customer and create alert
+                await workflow.execute_activity(
+                    update_customer_sanctions_status_activity,
+                    args=[
+                        customer_id_str,
+                        True,
+                        {
+                            "source": "sanctions_screening_workflow",
+                            "checked_name": name_to_check,
+                            "matches": result.get("matches", []),
+                            "screened_at": datetime.now().isoformat()
+                        }
+                    ],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+
+        # Calculate duration
+        duration_seconds = (datetime.now() - start_time).total_seconds()
+
+        # Record the screening run (only in batch mode)
+        if not customer_id or customer_id == "all":
+            try:
+                await workflow.execute_activity(
+                    record_screening_run_activity,
+                    args=[total_checked, hits_found, errors, duration_seconds],
+                    start_to_close_timeout=timedelta(seconds=30),
+                )
+            except Exception as e:
+                workflow.logger.warning(f"Failed to record screening run: {e}")
+
+        return {
+            "status": "completed",
+            "total_checked": total_checked,
+            "hits_found": hits_found,
+            "errors": errors,
+            "duration_seconds": duration_seconds
+        }
 
 
 # =============================================================================
@@ -1703,6 +2037,11 @@ async def run_worker() -> None:
             request_document_activity,
             perform_sar_checks_activity,
             update_alert_status_activity,
+            # Sanctions screening activities
+            check_sanctions_api_activity,
+            get_customers_for_screening_activity,
+            update_customer_sanctions_status_activity,
+            record_screening_run_activity,
         ],
     )
 

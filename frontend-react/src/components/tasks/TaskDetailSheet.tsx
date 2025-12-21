@@ -15,7 +15,9 @@ import {
   Trash2,
   FileText,
   Loader2,
-  UserPlus
+  UserPlus,
+  Link2,
+  Check
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -86,6 +88,7 @@ export function TaskDetailSheet({
   const updateStatus = useUpdateTaskStatus()
 
   const [newNote, setNewNote] = useState('')
+  const [linkCopied, setLinkCopied] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const users = usersData?.users || []
@@ -196,6 +199,19 @@ export function TaskDetailSheet({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
+  const handleCopyLink = async () => {
+    if (!taskId) return
+    const link = `${window.location.origin}/tasks?taskId=${taskId}`
+    try {
+      await navigator.clipboard.writeText(link)
+      setLinkCopied(true)
+      toast.success('Link copied to clipboard')
+      setTimeout(() => setLinkCopied(false), 2000)
+    } catch {
+      toast.error('Failed to copy link')
+    }
+  }
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-[1100px] overflow-y-auto">
@@ -213,7 +229,25 @@ export function TaskDetailSheet({
                 <ClipboardList className="h-6 w-6 text-primary" />
               </div>
               <div className="flex-1">
-                <h3 className="text-lg font-semibold">{task.title}</h3>
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <span className="text-xs text-muted-foreground font-mono">TASK-{task.id}</span>
+                    <h3 className="text-lg font-semibold">{task.title}</h3>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCopyLink}
+                    className="flex-shrink-0"
+                  >
+                    {linkCopied ? (
+                      <Check className="h-4 w-4 mr-2 text-green-500" />
+                    ) : (
+                      <Link2 className="h-4 w-4 mr-2" />
+                    )}
+                    {linkCopied ? 'Copied!' : 'Copy Link'}
+                  </Button>
+                </div>
                 <p className="text-sm text-muted-foreground mt-1">
                   {task.description || 'No description provided'}
                 </p>

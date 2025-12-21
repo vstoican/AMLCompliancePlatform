@@ -39,9 +39,12 @@ export function TaskKanbanCard({ task, onClick }: TaskKanbanCardProps) {
         <div className={cn('h-1 -mx-3 -mt-3 rounded-t-lg', priorityIndicator[task.priority])} />
 
         {/* Title */}
-        <h4 className="font-medium text-sm leading-tight line-clamp-2 mt-2">
-          {task.title}
-        </h4>
+        <div className="mt-2">
+          <span className="text-xs text-muted-foreground font-mono">#{task.id}</span>
+          <h4 className="font-medium text-sm leading-tight line-clamp-2">
+            {task.title}
+          </h4>
+        </div>
 
         {/* Task type */}
         <Badge variant="outline" className="text-xs">

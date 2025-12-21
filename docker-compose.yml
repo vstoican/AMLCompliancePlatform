@@ -47,6 +47,8 @@ services:
       - NATS_URL=nats://nats:4222
       - TEMPORAL_HOST=temporal
       - TEMPORAL_PORT=7233
+      - SANCTIONS_API_URL=http://host.docker.internal:8081
+      - SANCTIONS_API_TIMEOUT=30
     command: ["python", "-m", "src.workflows.worker"]
     depends_on:
       flyway:
