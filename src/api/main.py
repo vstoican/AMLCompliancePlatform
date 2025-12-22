@@ -44,6 +44,7 @@ from .ai_assistant import router as ai_router
 from .workflow_definitions import router as workflow_definitions_router
 from .company_settings import router as company_settings_router
 from .roles import router as roles_router
+from .api_keys import router as api_keys_router
 
 app = FastAPI(title="AML Compliance MVP", version="0.1.0", redoc_url=None)
 
@@ -82,6 +83,9 @@ app.include_router(company_settings_router)
 
 # Register roles router
 app.include_router(roles_router)
+
+# Register API keys router
+app.include_router(api_keys_router)
 
 # Global Temporal client
 temporal_client: Optional[TemporalClient] = None
@@ -242,13 +246,17 @@ async def sanctions_health() -> dict:
 async def dashboard_stats(conn: AsyncConnection = Depends(connection)) -> dict:
     """Get dashboard statistics for the overview page"""
     async with conn.cursor(row_factory=dict_row) as cur:
-        # Total customers
-        await cur.execute("SELECT COUNT(*) as count FROM customers")
-        total_customers = (await cur.fetchone())["count"]
-
-        # High risk customers
-        await cur.execute("SELECT COUNT(*) as count FROM customers WHERE risk_level = 'high'")
-        high_risk_customers = (await cur.fetchone())["count"]
+        # Transactions today (count and volume)
+        await cur.execute("""
+            SELECT
+                COUNT(*) as count,
+                COALESCE(SUM(amount), 0) as volume
+            FROM transactions
+            WHERE created_at >= CURRENT_DATE
+        """)
+        today_stats = await cur.fetchone()
+        transactions_today = today_stats["count"]
+        volume_today = float(today_stats["volume"])
 
         # Open alerts (not resolved)
         await cur.execute(
@@ -262,14 +270,6 @@ async def dashboard_stats(conn: AsyncConnection = Depends(connection)) -> dict:
         )
         pending_tasks = (await cur.fetchone())["count"]
 
-        # Total transactions (use approximate count for performance)
-        try:
-            await cur.execute("SELECT approximate_row_count('transactions') as count")
-            total_transactions = (await cur.fetchone())["count"] or 0
-        except Exception:
-            await cur.execute("SELECT COUNT(*) as count FROM transactions")
-            total_transactions = (await cur.fetchone())["count"]
-
         # Risk distribution
         await cur.execute("""
             SELECT
@@ -281,11 +281,10 @@ async def dashboard_stats(conn: AsyncConnection = Depends(connection)) -> dict:
         risk_dist = await cur.fetchone()
 
     return {
-        "total_customers": total_customers,
-        "high_risk_customers": high_risk_customers,
+        "transactions_today": transactions_today,
+        "volume_today": volume_today,
         "open_alerts": open_alerts,
         "pending_tasks": pending_tasks,
-        "total_transactions": total_transactions,
         "risk_distribution": {
             "low": risk_dist["low"],
             "medium": risk_dist["medium"],

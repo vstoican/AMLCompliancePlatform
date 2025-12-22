@@ -2,11 +2,10 @@ import { useQuery } from '@tanstack/react-query'
 import api from '@/lib/api'
 
 interface DashboardStats {
-  total_customers: number
-  high_risk_customers: number
+  transactions_today: number
+  volume_today: number
   open_alerts: number
   pending_tasks: number
-  total_transactions: number
   risk_distribution: {
     low: number
     medium: number

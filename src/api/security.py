@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -15,6 +15,9 @@ from psycopg.rows import dict_row
 
 from .config import settings
 from .db import connection
+
+# API Key prefix
+API_KEY_PREFIX = "sk_live_"
 
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -78,14 +81,87 @@ def hash_refresh_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+async def _validate_api_key(api_key: str, conn: AsyncConnection) -> Optional[dict]:
+    """
+    Validate an API key and return user info if valid.
+    Returns None if invalid.
+    """
+    import bcrypt
+
+    if not api_key or not api_key.startswith(API_KEY_PREFIX):
+        return None
+
+    key_prefix = api_key[:16]
+
+    async with conn.cursor(row_factory=dict_row) as cur:
+        # Find potential matching keys by prefix
+        await cur.execute(
+            """
+            SELECT ak.id, ak.user_id, ak.key_hash, ak.scopes, ak.expires_at, ak.is_active,
+                   u.email, u.full_name, u.role, u.is_active as user_is_active
+            FROM api_keys ak
+            JOIN users u ON u.id = ak.user_id
+            WHERE ak.key_prefix = %s AND ak.is_active = TRUE AND u.is_active = TRUE
+            """,
+            (key_prefix,)
+        )
+        rows = await cur.fetchall()
+
+        for row in rows:
+            # Check expiration
+            if row["expires_at"] and row["expires_at"] < datetime.now(timezone.utc):
+                continue
+
+            # Verify the key hash
+            try:
+                if bcrypt.checkpw(api_key.encode(), row["key_hash"].encode()):
+                    # Update last_used_at
+                    await cur.execute(
+                        "UPDATE api_keys SET last_used_at = NOW() WHERE id = %s",
+                        (row["id"],)
+                    )
+
+                    return {
+                        "id": str(row["user_id"]),
+                        "email": row["email"],
+                        "full_name": row["full_name"],
+                        "role": row["role"],
+                        "is_active": row["user_is_active"],
+                        "scopes": row["scopes"],
+                        "auth_type": "api_key",
+                        "api_key_id": row["id"]
+                    }
+            except Exception:
+                continue
+
+        return None
+
+
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
     conn: AsyncConnection = Depends(connection),
 ) -> dict:
     """
-    Dependency to get the current authenticated user from JWT token.
+    Dependency to get the current authenticated user from JWT token or API key.
     Returns user dict with id, email, role, full_name, is_active.
+
+    Supports:
+    - Authorization: Bearer <jwt_token>
+    - Authorization: Bearer <api_key> (if key starts with sk_live_)
+    - X-API-Key: <api_key>
     """
+    # Try X-API-Key header first
+    if x_api_key:
+        user = await _validate_api_key(x_api_key, conn)
+        if user:
+            return user
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
+
+    # Check for Bearer token
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -94,6 +170,18 @@ async def get_current_user(
         )
 
     token = credentials.credentials
+
+    # Check if it's an API key (starts with sk_live_)
+    if token.startswith(API_KEY_PREFIX):
+        user = await _validate_api_key(token, conn)
+        if user:
+            return user
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid API key",
+        )
+
+    # Otherwise, treat as JWT token
     payload = decode_token(token)
 
     # Verify token type

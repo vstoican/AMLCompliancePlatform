@@ -1,7 +1,17 @@
-import { Users, AlertTriangle, ClipboardList, TrendingUp } from 'lucide-react'
+import { CreditCard, TrendingUp, AlertTriangle, ClipboardList } from 'lucide-react'
 import { StatsCard } from '@/components/shared'
 import { useDashboardStats } from '@/hooks/queries'
 import { Skeleton } from '@/components/ui/skeleton'
+
+function formatVolume(value: number): string {
+  if (value >= 1_000_000) {
+    return `€${(value / 1_000_000).toFixed(1)}M`
+  }
+  if (value >= 1_000) {
+    return `€${(value / 1_000).toFixed(1)}K`
+  }
+  return `€${value.toFixed(0)}`
+}
 
 export function StatsOverview() {
   const { data: stats, isLoading } = useDashboardStats()
@@ -22,24 +32,16 @@ export function StatsOverview() {
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       <StatsCard
-        title="Total Customers"
-        value={stats?.total_customers ?? 0}
-        icon={Users}
-        description="Active in the system"
+        title="Transactions Today"
+        value={stats?.transactions_today ?? 0}
+        icon={CreditCard}
+        description="Processed today"
       />
       <StatsCard
-        title="High Risk Customers"
-        value={stats?.high_risk_customers ?? 0}
+        title="Volume Today"
+        value={formatVolume(stats?.volume_today ?? 0)}
         icon={TrendingUp}
-        variant="danger"
-        description="Require monitoring"
-      />
-      <StatsCard
-        title="Open Alerts"
-        value={stats?.open_alerts ?? 0}
-        icon={AlertTriangle}
-        variant="warning"
-        description="Pending investigation"
+        description="Total amount"
       />
       <StatsCard
         title="Pending Tasks"
@@ -47,6 +49,13 @@ export function StatsOverview() {
         icon={ClipboardList}
         variant="primary"
         description="To be completed"
+      />
+      <StatsCard
+        title="Open Alerts"
+        value={stats?.open_alerts ?? 0}
+        icon={AlertTriangle}
+        variant="warning"
+        description="Pending investigation"
       />
     </div>
   )

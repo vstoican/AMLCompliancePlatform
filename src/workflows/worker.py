@@ -1357,13 +1357,35 @@ async def update_customer_sanctions_status_activity(
             if sanctions_hit:
                 # Get customer name for alert/task description
                 await cur.execute(
-                    "SELECT full_name, first_name, last_name FROM customers WHERE id = %s",
+                    "SELECT full_name, first_name, last_name, sanctions_hit FROM customers WHERE id = %s",
                     (customer_id,)
                 )
                 customer = await cur.fetchone()
+
+                # Skip if customer is already flagged (prevent duplicate alerts)
+                if customer and customer.get("sanctions_hit"):
+                    logger.info(f"Customer {customer_id} already flagged - skipping alert creation")
+                    return
+
                 customer_name = customer["full_name"] if customer else "Unknown"
                 if not customer_name and customer:
                     customer_name = f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip()
+
+                # Check if an open sanctions alert already exists for this customer
+                await cur.execute(
+                    """
+                    SELECT id FROM alerts
+                    WHERE customer_id = %s
+                      AND scenario = 'sanctions_match'
+                      AND status NOT IN ('resolved')
+                    LIMIT 1
+                    """,
+                    (customer_id,)
+                )
+                existing_alert = await cur.fetchone()
+                if existing_alert:
+                    logger.info(f"Open sanctions alert already exists for customer {customer_id} - skipping")
+                    return
 
                 # Extract rich information from matches
                 matches = match_details.get("matches", [])
@@ -1628,6 +1650,11 @@ class SanctionsScreeningWorkflow:
         # Process each customer
         for customer in customers:
             customer_id_str = customer["id"]
+
+            # Skip customers already flagged with sanctions hit
+            if customer.get("sanctions_hit"):
+                workflow.logger.info(f"Skipping customer {customer_id_str} - already flagged with sanctions hit")
+                continue
 
             # Build the name to check
             name_to_check = customer.get("full_name")
