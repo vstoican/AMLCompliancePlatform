@@ -21,9 +21,17 @@ export default function TasksPage() {
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [createModalOpen, setCreateModalOpen] = useState(false)
-  const [viewMode, setViewMode] = useState<ViewMode>('board')
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    const saved = localStorage.getItem('tasks-view-mode')
+    return (saved === 'list' || saved === 'board') ? saved : 'list'
+  })
 
   const { data, isLoading, refetch } = useTasks(filters)
+
+  // Persist view mode preference
+  useEffect(() => {
+    localStorage.setItem('tasks-view-mode', viewMode)
+  }, [viewMode])
 
   // Open task detail panel if taskId is in URL
   useEffect(() => {

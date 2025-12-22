@@ -57,7 +57,7 @@ export function DataTable<TData, TValue>({
   searchPlaceholder = "Search...",
   isLoading = false,
   onRowClick,
-  pageSize = 10,
+  pageSize: initialPageSize = 10,
   showPagination = true,
   emptyMessage = "No results",
   emptyDescription = "No data to display.",
@@ -66,12 +66,17 @@ export function DataTable<TData, TValue>({
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>({})
   const [rowSelection, setRowSelection] = React.useState({})
+  const [pagination, setPagination] = React.useState({
+    pageIndex: 0,
+    pageSize: initialPageSize,
+  })
 
   const table = useReactTable({
     data,
     columns,
     onSortingChange: setSorting,
     onColumnFiltersChange: setColumnFilters,
+    onPaginationChange: setPagination,
     getCoreRowModel: getCoreRowModel(),
     getPaginationRowModel: showPagination ? getPaginationRowModel() : undefined,
     getSortedRowModel: getSortedRowModel(),
@@ -81,16 +86,12 @@ export function DataTable<TData, TValue>({
     // When showPagination is false, we're using server-side pagination
     // so tell the table to show all rows that were passed
     manualPagination: !showPagination,
-    initialState: {
-      pagination: {
-        pageSize,
-      },
-    },
     state: {
       sorting,
       columnFilters,
       columnVisibility,
       rowSelection,
+      pagination,
     },
   })
 
@@ -197,7 +198,6 @@ function DataTablePagination<TData>({
             value={`${table.getState().pagination.pageSize}`}
             onValueChange={(value) => {
               table.setPageSize(Number(value))
-              table.setPageIndex(0) // Reset to first page when changing page size
             }}
           >
             <SelectTrigger className="h-8 w-[70px]">
