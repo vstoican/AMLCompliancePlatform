@@ -48,28 +48,32 @@ class JetStreamPublisher:
                 return False
 
     async def _ensure_stream(self):
-        """Create AML_EVENTS stream if it doesn't exist"""
+        """Create or update AML_EVENTS stream"""
         try:
+            # Stream configuration
+            stream_config = {
+                "name": "AML_EVENTS",
+                "subjects": ["aml.>"],
+                "retention": "limits",
+                "max_age": 24 * 60 * 60,  # 24 hours in seconds
+                "max_bytes": 512 * 1024 * 1024,  # 512MB
+                "storage": "file",  # Persist to disk
+            }
+
             # Try to get existing stream info
             try:
-                await self.js.stream_info("AML_EVENTS")
-                logger.info("Stream AML_EVENTS already exists")
+                info = await self.js.stream_info("AML_EVENTS")
+                # Stream exists, update it with new config
+                await self.js.update_stream(**stream_config)
+                logger.info("✅ Updated JetStream stream: AML_EVENTS (24h retention, 512MB)")
                 return
             except Exception:
                 # Stream doesn't exist, create it
                 pass
 
             # Create stream with storage configuration
-            # Note: Using dict for config compatibility with nats-py 2.7.2
-            await self.js.add_stream(
-                name="AML_EVENTS",
-                subjects=["aml.>"],
-                retention="limits",
-                max_age=30 * 24 * 60 * 60,  # 30 days in seconds
-                max_bytes=2 * 1024 * 1024 * 1024,  # 2GB
-                storage="file",  # Persist to disk
-            )
-            logger.info("✅ Created JetStream stream: AML_EVENTS (30d retention, 2GB, file storage)")
+            await self.js.add_stream(**stream_config)
+            logger.info("✅ Created JetStream stream: AML_EVENTS (24h retention, 512MB, file storage)")
 
         except Exception as e:
             logger.error(f"Failed to ensure stream: {e}")
@@ -163,3 +167,63 @@ async def connect_jetstream():
 async def close_jetstream():
     """Close JetStream connection (call on shutdown)"""
     await _publisher.close()
+
+
+async def get_recent_notifications(limit: int = 50) -> list[dict[str, Any]]:
+    """
+    Fetch recent alert notifications from JetStream.
+
+    Args:
+        limit: Maximum number of notifications to return
+
+    Returns:
+        List of notification payloads, newest first
+    """
+    if not _publisher._connected or not _publisher.js:
+        connected = await _publisher.connect()
+        if not connected:
+            logger.error("Cannot fetch notifications: Not connected to JetStream")
+            return []
+
+    notifications = []
+
+    try:
+        # Create an ephemeral consumer to read recent messages
+        # DeliverLastPerSubject would give us the latest, but we want recent history
+        psub = await _publisher.js.pull_subscribe(
+            "aml.alert.>",
+            durable=None,  # Ephemeral consumer
+            stream="AML_EVENTS",
+        )
+
+        try:
+            # Fetch messages (this will get from the beginning of the stream)
+            messages = await psub.fetch(batch=limit, timeout=2.0)
+
+            for msg in messages:
+                try:
+                    payload = json.loads(msg.data.decode("utf-8"))
+                    # Add metadata
+                    payload["_seq"] = msg.metadata.sequence.stream
+                    payload["_timestamp"] = msg.metadata.timestamp.isoformat() if msg.metadata.timestamp else None
+                    payload["_subject"] = msg.subject
+                    notifications.append(payload)
+                    # Acknowledge the message for this ephemeral consumer
+                    await msg.ack()
+                except Exception as e:
+                    logger.error(f"Error parsing notification message: {e}")
+                    continue
+
+        except asyncio.TimeoutError:
+            # No messages available, that's okay
+            pass
+        finally:
+            # Clean up the ephemeral subscription
+            await psub.unsubscribe()
+
+    except Exception as e:
+        logger.error(f"Error fetching notifications from JetStream: {e}")
+
+    # Return newest first
+    notifications.reverse()
+    return notifications[:limit]

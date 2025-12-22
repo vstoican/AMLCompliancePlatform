@@ -42,5 +42,13 @@ class Settings(BaseModel):
     sanctions_api_url: str = os.getenv("SANCTIONS_API_URL", "http://localhost:8081")
     sanctions_api_timeout: int = int(os.getenv("SANCTIONS_API_TIMEOUT", "30"))
 
+    # S3/MinIO Storage
+    s3_endpoint: str = os.getenv("S3_ENDPOINT", "http://localhost:9000")
+    s3_access_key: str = os.getenv("S3_ACCESS_KEY", "minioadmin")
+    s3_secret_key: str = os.getenv("S3_SECRET_KEY", "minioadmin")
+    s3_bucket: str = os.getenv("S3_BUCKET", "aml-attachments")
+    s3_archive_bucket: str = os.getenv("S3_ARCHIVE_BUCKET", "compliance-archives")
+    s3_region: str = os.getenv("S3_REGION", "us-east-1")
+
 
 settings = Settings()

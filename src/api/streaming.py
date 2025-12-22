@@ -3,6 +3,7 @@ Server-Sent Events (SSE) streaming endpoints for real-time updates
 """
 import asyncio
 import json
+import logging
 from datetime import datetime
 from typing import AsyncGenerator
 
@@ -12,7 +13,9 @@ from psycopg import AsyncConnection
 from psycopg.rows import dict_row
 
 from .db import connection
+from .config import settings
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -253,6 +256,101 @@ async def stream_tasks(conn: AsyncConnection = Depends(connection)):
     """
     return StreamingResponse(
         generate_task_stream(conn),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def generate_notification_stream() -> AsyncGenerator[str, None]:
+    """
+    Generate SSE stream for notifications from NATS JetStream.
+    Subscribes to aml.alert.> subjects and pushes in real-time.
+    """
+    from nats.aio.client import Client as NATS
+
+    nc = NATS()
+    js = None
+
+    try:
+        await nc.connect(servers=[settings.nats_url])
+        js = nc.jetstream()
+        logger.info("SSE client connected to NATS JetStream")
+
+        # Create push subscription for real-time delivery
+        psub = await js.subscribe(
+            "aml.alert.>",
+            stream="AML_EVENTS",
+            deliver_policy="new",  # Only new messages from now
+        )
+
+        # Send initial keepalive
+        yield f": connected\n\n"
+
+        async for msg in psub.messages:
+            try:
+                payload = json.loads(msg.data.decode("utf-8"))
+
+                # Format notification
+                severity = payload.get("severity", "medium")
+                scenario = payload.get("scenario", "Unknown")
+                customer_id = payload.get("customer_id", "")
+
+                severity_labels = {
+                    "critical": "🚨 Critical Alert",
+                    "high": "⚠️ High Priority Alert",
+                    "medium": "Alert",
+                    "low": "Low Priority Alert",
+                }
+
+                notification = {
+                    "id": f"alert-{payload.get('alert_id', msg.metadata.sequence.stream)}",
+                    "type": "alert",
+                    "title": severity_labels.get(severity, "Alert"),
+                    "message": f"{scenario}" + (f" for customer {customer_id[:8]}..." if customer_id else ""),
+                    "severity": severity,
+                    "timestamp": payload.get("created_at", datetime.now().isoformat()),
+                    "data": {
+                        "alertId": payload.get("alert_id"),
+                        "customerId": customer_id,
+                        "scenario": scenario,
+                        "alertType": payload.get("type"),
+                    }
+                }
+
+                yield f"data: {json.dumps(notification)}\n\n"
+                await msg.ack()
+
+            except Exception as e:
+                logger.error(f"Error processing NATS message: {e}")
+                continue
+
+    except asyncio.CancelledError:
+        logger.info("SSE notification stream cancelled")
+    except Exception as e:
+        logger.error(f"Error in notification stream: {e}")
+    finally:
+        if nc and not nc.is_closed:
+            await nc.close()
+
+
+@router.get("/stream/notifications")
+async def stream_notifications():
+    """
+    Server-Sent Events endpoint for real-time notifications from NATS.
+
+    Usage:
+        const eventSource = new EventSource('http://localhost:8000/stream/notifications');
+        eventSource.onmessage = (event) => {
+            const notification = JSON.parse(event.data);
+            console.log(notification);
+        };
+    """
+    return StreamingResponse(
+        generate_notification_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",

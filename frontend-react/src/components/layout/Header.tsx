@@ -45,8 +45,8 @@ export function Header() {
   const navigate = useNavigate()
   const { user, logout } = useAuthStore()
   const { setMobileMenuOpen } = useThemeStore()
-  const { markAsRead, markAllAsRead, clearAll } = useNotificationStore()
-  const { notifications, unreadCount, isConnected } = useNotifications()
+  const { clearAll } = useNotificationStore()
+  const { notifications, unreadCount, isConnected, markAsRead, markAllAsRead } = useNotifications()
 
   const pageTitle = pageTitles[location.pathname] || 'Dashboard'
 

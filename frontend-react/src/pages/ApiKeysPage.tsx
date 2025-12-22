@@ -36,8 +36,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { PageHeader, StatsCard } from '@/components/shared'
-import { useApiKeys, useCreateApiKey, useUpdateApiKey, useDeleteApiKey, useToggleApiKey } from '@/hooks/queries'
-import type { ApiKey, ApiKeyCreateRequest, ApiKeyCreateResponse } from '@/types/api-key'
+import { useApiKeys, useCreateApiKey, useDeleteApiKey, useToggleApiKey } from '@/hooks/queries'
+import type { ApiKey, ApiKeyCreateResponse } from '@/types/api-key'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatDistanceToNow } from 'date-fns'
 
@@ -53,7 +53,6 @@ export default function ApiKeysPage() {
 
   const { data, isLoading, refetch } = useApiKeys()
   const createApiKey = useCreateApiKey()
-  const updateApiKey = useUpdateApiKey()
   const deleteApiKeyMutation = useDeleteApiKey()
   const toggleApiKey = useToggleApiKey()
 

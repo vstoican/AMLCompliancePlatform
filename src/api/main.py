@@ -45,6 +45,8 @@ from .workflow_definitions import router as workflow_definitions_router
 from .company_settings import router as company_settings_router
 from .roles import router as roles_router
 from .api_keys import router as api_keys_router
+from .exports import router as exports_router
+from .notifications import router as notifications_router
 
 app = FastAPI(title="AML Compliance MVP", version="0.1.0", redoc_url=None)
 
@@ -86,6 +88,12 @@ app.include_router(roles_router)
 
 # Register API keys router
 app.include_router(api_keys_router)
+
+# Register exports router
+app.include_router(exports_router)
+
+# Register notifications router
+app.include_router(notifications_router)
 
 # Global Temporal client
 temporal_client: Optional[TemporalClient] = None

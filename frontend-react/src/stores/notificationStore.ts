@@ -15,32 +15,55 @@ interface NotificationState {
   notifications: Notification[]
   unreadCount: number
   isConnected: boolean
+  isLoading: boolean
+  lastFetchedIds: Set<string>
 
   // Actions
   addNotification: (notification: Omit<Notification, 'id' | 'read'>) => void
+  setNotifications: (notifications: Notification[]) => void
   markAsRead: (id: string) => void
   markAllAsRead: () => void
   removeNotification: (id: string) => void
   clearAll: () => void
   setConnected: (connected: boolean) => void
+  setLoading: (loading: boolean) => void
 }
 
 export const useNotificationStore = create<NotificationState>((set) => ({
   notifications: [],
   unreadCount: 0,
   isConnected: false,
+  isLoading: false,
+  lastFetchedIds: new Set(),
 
   addNotification: (notification) => {
     const newNotification: Notification = {
       ...notification,
-      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: notification.data?.alertId
+        ? `alert-${notification.data.alertId}`
+        : `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       read: false,
     }
 
-    set((state) => ({
-      notifications: [newNotification, ...state.notifications].slice(0, 50), // Keep last 50
-      unreadCount: state.unreadCount + 1,
-    }))
+    set((state) => {
+      // Avoid duplicates by checking ID
+      if (state.notifications.some((n) => n.id === newNotification.id)) {
+        return state
+      }
+      return {
+        notifications: [newNotification, ...state.notifications].slice(0, 50),
+        unreadCount: state.unreadCount + 1,
+      }
+    })
+  },
+
+  setNotifications: (notifications) => {
+    const ids = new Set(notifications.map((n) => n.id))
+    set({
+      notifications: notifications.slice(0, 50),
+      unreadCount: notifications.filter((n) => !n.read).length,
+      lastFetchedIds: ids,
+    })
   },
 
   markAsRead: (id) => {
@@ -77,10 +100,14 @@ export const useNotificationStore = create<NotificationState>((set) => ({
   },
 
   clearAll: () => {
-    set({ notifications: [], unreadCount: 0 })
+    set({ notifications: [], unreadCount: 0, lastFetchedIds: new Set() })
   },
 
   setConnected: (connected) => {
     set({ isConnected: connected })
+  },
+
+  setLoading: (loading) => {
+    set({ isLoading: loading })
   },
 }))
