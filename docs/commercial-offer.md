@@ -1,8 +1,8 @@
-# Commercial Offer: AML Compliance Platform
+# Commercial Offer: Sentry by TrustRelay
 
 ## Executive summary
 
-A comprehensive Anti-Money Laundering compliance solution designed for financial institutions. The platform provides real-time transaction monitoring, automated sanctions screening, configurable alert rules, and AI-powered analytics. Licensed on a transparent per-transaction basis.
+Sentry is a comprehensive Anti-Money Laundering compliance solution designed for financial institutions. The platform provides real-time transaction monitoring, automated sanctions screening, configurable alert rules, and AI-powered analytics. Licensed on a transparent per-transaction basis.
 
 ---
 
@@ -194,7 +194,7 @@ Automated screening against three global sanctions lists, synchronized every 24 
 ## Next steps
 
 1. Confirm estimated monthly transaction volume
-2. Schedule platform demonstration
+2. Schedule Sentry platform demonstration
 3. Define API integration requirements
 4. Finalize commercial terms
 

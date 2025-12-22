@@ -148,8 +148,8 @@ export function Sidebar() {
             <Shield className="h-5 w-5 text-primary-foreground" />
           </div>
           <div>
-            <span className="font-semibold text-foreground">TrustRelay</span>
-            <span className="text-xs text-muted-foreground block">AML Compliance</span>
+            <span className="font-semibold text-foreground">Sentry</span>
+            <span className="text-xs text-muted-foreground block">by TrustRelay</span>
           </div>
         </div>
       </div>
@@ -169,8 +169,7 @@ export function Sidebar() {
       {/* Footer */}
       <div className="border-t border-border p-4">
         <div className="text-xs text-muted-foreground text-center">
-          <p>AML Compliance Platform</p>
-          <p className="mt-1">v2.0</p>
+          <p>Sentry v2.0</p>
           <p className="mt-2">&copy; {new Date().getFullYear()} TrustRelay</p>
         </div>
       </div>

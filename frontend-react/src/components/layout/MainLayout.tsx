@@ -91,15 +91,15 @@ export function MainLayout() {
                 <Shield className="h-5 w-5 text-primary-foreground" />
               </div>
               <div>
-                <span className="font-semibold">TrustRelay</span>
-                <span className="text-xs text-muted-foreground block">AML Compliance</span>
+                <span className="font-semibold">Sentry</span>
+                <span className="text-xs text-muted-foreground block">by TrustRelay</span>
               </div>
             </div>
           </div>
           <MobileNav />
           <Separator />
           <div className="p-4 text-xs text-muted-foreground text-center">
-            AML Compliance Platform v2.0
+            Sentry v2.0
           </div>
         </SheetContent>
       </Sheet>
